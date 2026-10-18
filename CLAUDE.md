@@ -161,7 +161,7 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `INTERACTION_FILE` | `agentP/src/prompts/interaction.json` | CLI interaction strings path |
 | `REFORMULATION_PROMPT` | `agentP/src/prompts/reformulated_prompt.txt` | Query rewrite template path |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from @BotFather |
-| `TELEGRAM_OWNER_ID` | _(empty — expense tracker disabled)_ | Telegram user id of the owner; only they can log expenses |
+| `TELEGRAM_OWNER_ID` | _(empty)_ | Telegram user id of the owner; only needed for agents marked `"owner_only": true` in `agents.json` (none by default) |
 | `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
 | `EXPENSES_DIR` | `expenses` | Directory (from project root) for monthly expense files |
 | `NORMALISER_PROMPT_FILE` | `orchestrator/prompts/normaliser.txt` | Orchestrator normaliser prompt path |
