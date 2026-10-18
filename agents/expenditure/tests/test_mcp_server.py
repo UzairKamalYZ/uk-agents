@@ -62,7 +62,27 @@ def test_get_expense_breakdown(ledger):
     assert "• Colruyt: €90.00" in mcp_server.get_expense_breakdown(ledger=ledger)
     september = mcp_server.get_expense_breakdown("2026-09", ledger=ledger)
     assert september.startswith("🧾 Spending by place — September 2026\n• Delhaize: €20.00")
-    assert mcp_server.get_expense_breakdown("Sept", ledger=ledger) == "Invalid month 'Sept', expected YYYY-MM."
+    assert mcp_server.get_expense_breakdown("Sept", ledger=ledger) == (
+        "Invalid month 'Sept', expected current, previous or YYYY-MM."
+    )
+
+
+@pytest.mark.parametrize("month", ["previous", "Last"])
+def test_breakdown_previous_month_largest_first(ledger, month):
+    mcp_server.add_expense("Delhaize", 20, "2026-09-02", ledger=ledger)
+    mcp_server.add_expense("Colruyt", 70, "2026-09-10", ledger=ledger)
+    mcp_server.add_expense("delhaize", 15, "2026-09-20", ledger=ledger)
+    mcp_server.add_expense("Aldi", 500, "2026-10-01", ledger=ledger)
+    assert mcp_server.get_expense_breakdown(month, ledger=ledger) == (
+        "🧾 Spending by place — September 2026\n• Colruyt: €70.00\n• Delhaize: €35.00\n\n"
+        "Total: €105.00\n\n— Expenditure Tracker"
+    )
+
+
+def test_breakdown_previous_month_across_year_boundary(ledger):
+    mcp_server.add_expense("Colruyt", 10, "2025-12-31", ledger=ledger)
+    with patch.object(mcp_server, "_today", return_value=date(2026, 1, 15)):
+        assert "December 2025\n• Colruyt: €10.00" in mcp_server.get_expense_breakdown("previous", ledger=ledger)
 
 
 def test_invalid_date(ledger):

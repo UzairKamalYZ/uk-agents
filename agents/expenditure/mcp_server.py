@@ -1,6 +1,6 @@
 """Local stdio MCP server exposing the expense ledger as tools."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -112,18 +112,29 @@ def get_expense_totals(*, ledger: ExpenseLedger | None = None) -> str:
 
 
 def get_expense_breakdown(month: str | None = None, *, ledger: ExpenseLedger | None = None) -> str:
-    """Return spending per place (shop, merchant) for one month, largest first.
+    """Summarise one month's spending: total per place (shop, merchant), largest first.
 
-    month is YYYY-MM; omit it (or pass empty) for the current month.
+    month is "current" (this month), "previous" (last month) or YYYY-MM; omit it (or pass empty)
+    for the current month.
     """
-    if month is None or not str(month).strip():
-        first = _today().replace(day=1)
-    else:
-        try:
-            first = date.fromisoformat(f"{str(month).strip()}-01")
-        except ValueError:
-            return f"Invalid month '{month}', expected YYYY-MM."
+    first = _parse_month(month)
+    if isinstance(first, str):
+        return first
     return format_breakdown(first, _ledger(ledger).breakdown(first.year, first.month))
+
+
+def _parse_month(month: str | None) -> date | str:
+    """Return the first day of the month, or an error string."""
+    key = "" if month is None else str(month).strip().lower()
+    this_month = _today().replace(day=1)
+    if key in ("", "current", "this"):
+        return this_month
+    if key in ("previous", "last"):
+        return (this_month - timedelta(days=1)).replace(day=1)
+    try:
+        return date.fromisoformat(f"{key}-01")
+    except ValueError:
+        return f"Invalid month '{month}', expected current, previous or YYYY-MM."
 
 
 # Thin wrappers keep the `ledger` kwarg out of the tool schemas.
