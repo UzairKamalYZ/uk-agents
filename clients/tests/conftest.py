@@ -62,6 +62,7 @@ _core_config_mod = _stub("core.src.config.config")
 _Config = MagicMock()
 _Config.API_KEY = ""
 _Config.TELEGRAM_BOT_TOKEN = "test-token"
+_Config.TELEGRAM_OWNER_ID = ""
 _Config.CRON_SEARCH_PROMPT = "find properties"
 # llm_model_graph.py reads these three at module level via os.environ.setdefault;
 # they must be real strings or the call raises TypeError when both test suites run together.

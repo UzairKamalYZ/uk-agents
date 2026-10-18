@@ -29,6 +29,8 @@ class Config:
     REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    # Telegram user id of the owner; only they can use the expense tracker
+    TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_ID", "")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "uk-agents")

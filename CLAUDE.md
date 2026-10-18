@@ -161,6 +161,10 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `INTERACTION_FILE` | `agentP/src/prompts/interaction.json` | CLI interaction strings path |
 | `REFORMULATION_PROMPT` | `agentP/src/prompts/reformulated_prompt.txt` | Query rewrite template path |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from @BotFather |
+| `TELEGRAM_OWNER_ID` | _(empty — expense tracker disabled)_ | Telegram user id of the owner; only they can log expenses |
+| `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
+| `EXPENSES_DIR` | `expenses` | Directory (from project root) for monthly expense files |
+| `NORMALISER_PROMPT_FILE` | `orchestrator/prompts/normaliser.txt` | Orchestrator normaliser prompt path |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled cron job |
 | `SESSION_DB_FILE` | `sessions.db` | SQLite file for persistent chat session history |

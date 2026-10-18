@@ -1,5 +1,6 @@
+import asyncio
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from clients.telegram.main import TelegramClient
 
@@ -97,6 +98,78 @@ class TestBot(unittest.TestCase):
         with patch("clients.telegram.main.ApplicationBuilder") as MockBuilder:
             _Bot()
             MockBuilder.return_value.token.assert_called_once_with(Config.TELEGRAM_BOT_TOKEN)
+
+
+class TestVoiceAndOwner(unittest.TestCase):
+
+    def _make(self, transcript="", owner_id="", user_id=42, transcribe_exc=None):
+        from clients.telegram.main import _Bot
+        with patch("clients.telegram.main.OrchestratorAgent") as MockAgent, \
+                patch("clients.telegram.main.Transcriber") as MockTr, \
+                patch("clients.telegram.main.Config") as MockCfg:
+            MockCfg.TELEGRAM_OWNER_ID = owner_id
+            MockCfg.TELEGRAM_BOT_TOKEN = "t"
+            bot = _Bot()
+        bot.local_agent.ask = MagicMock(return_value="Logged €90…")
+        tr = bot.transcriber
+        if transcribe_exc:
+            tr.transcribe = MagicMock(side_effect=transcribe_exc)
+        else:
+            tr.transcribe = MagicMock(return_value=transcript)
+        sent = MagicMock()
+        sent.edit_text = AsyncMock()
+        update = MagicMock()
+        update.effective_user.id = user_id
+        update.effective_chat.id = 7
+        update.message.text = "hello"
+        update.message.reply_text = AsyncMock(return_value=sent)
+        context = MagicMock()
+        file = MagicMock()
+        file.download_to_drive = AsyncMock()
+        context.bot.get_file = AsyncMock(return_value=file)
+        return bot, update, context, sent, owner_id
+
+    def _run(self, coro_fn, bot, update, context, owner_id):
+        with patch("clients.telegram.main.Config") as MockCfg:
+            MockCfg.TELEGRAM_OWNER_ID = owner_id
+            asyncio.run(coro_fn(update, context))
+
+    def test_voice_shows_transcript_then_answer(self):
+        bot, update, context, sent, o = self._make(transcript="Colruyt 90 euros today")
+        self._run(bot._handle_voice, bot, update, context, o)
+        sent.edit_text.assert_awaited_with("🎤 You said: Colruyt 90 euros today\n\nLogged €90…")
+        self.assertEqual(bot.local_agent.ask.call_args.args[0], "Colruyt 90 euros today")
+
+    def test_empty_transcript_asks_to_retry(self):
+        bot, update, context, sent, o = self._make(transcript="")
+        self._run(bot._handle_voice, bot, update, context, o)
+        bot.local_agent.ask.assert_not_called()
+        update.message.reply_text.assert_awaited_once_with(
+            "🎤 I couldn't hear anything — please try again or type it.")
+
+    def test_transcription_error_replies_sorry(self):
+        bot, update, context, sent, o = self._make(transcribe_exc=RuntimeError("boom"))
+        self._run(bot._handle_voice, bot, update, context, o)
+        bot.local_agent.ask.assert_not_called()
+        update.message.reply_text.assert_awaited_once_with(
+            "Sorry, I couldn't transcribe that voice note. Please try again or type it.")
+
+    def test_owner_flag_true_for_owner_id(self):
+        bot, update, context, sent, o = self._make(owner_id="42", user_id=42)
+        self._run(bot._handle_message, bot, update, context, o)
+        self.assertIs(bot.local_agent.ask.call_args.kwargs["is_owner"], True)
+
+    def test_owner_flag_false_when_unset_or_other_user(self):
+        for owner_id, uid in (("", 42), ("99", 42)):
+            bot, update, context, sent, o = self._make(owner_id=owner_id, user_id=uid)
+            self._run(bot._handle_message, bot, update, context, o)
+            self.assertIs(bot.local_agent.ask.call_args.kwargs["is_owner"], False)
+
+    def test_ask_error_still_replies_sorry(self):
+        bot, update, context, sent, o = self._make()
+        bot.local_agent.ask = MagicMock(side_effect=RuntimeError("x"))
+        self._run(bot._handle_message, bot, update, context, o)
+        sent.edit_text.assert_awaited_with("Sorry, something went wrong. Please try again.")
 
 
 if __name__ == "__main__":
