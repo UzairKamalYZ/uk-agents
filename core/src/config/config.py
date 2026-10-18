@@ -45,6 +45,7 @@ class Config:
     # Orchestrator prompt files
     SUPERVISOR_PROMPT_FILE = os.getenv("SUPERVISOR_PROMPT_FILE", "orchestrator/prompts/supervisor.txt")
     SYNTHESISER_PROMPT_FILE = os.getenv("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
+    NORMALISER_PROMPT_FILE = os.getenv("NORMALISER_PROMPT_FILE", "orchestrator/prompts/normaliser.txt")
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
     EXPENSES_DIR = str(_PROJECT_ROOT / os.getenv("EXPENSES_DIR", "expenses"))

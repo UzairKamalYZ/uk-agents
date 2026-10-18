@@ -43,8 +43,9 @@ class GraphState(TypedDict):
     Fields
     ------
     user_input : str
-        The raw question submitted by the user.  Set once at graph entry;
-        never modified after that.
+        The user's question as the supervisor and agents see it.  Set to the
+        raw message at graph entry, then replaced by the normaliser's cleaned
+        text (or, on a pending correction, the text plus the pending summary).
 
     session_id : str
         Identifies the conversation so per-agent session history is kept

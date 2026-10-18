@@ -16,22 +16,16 @@ Usage
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import GraphState
+from ._json import parse_json_object
 
 logger = logging.getLogger(__name__)
-
-# Strips markdown code fences (```json ... ```) before JSON parsing
-_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
-# Fallback: extracts the first {...} block when full JSON parsing fails
-_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 
 
 class SupervisorNode:
@@ -90,34 +84,16 @@ class SupervisorNode:
         Extract the routing token from the supervisor's raw LLM output.
 
         Priority:
-          1. Strip markdown fences.
-          2. Full JSON parse → extract "next" value.
-          3. Regex extraction of the first {...} block.
+          1-3. parse_json_object: strip fences, full JSON parse, then regex
+               extraction of the first {...} block → extract "next" value.
           4. Fallback to "FINISH" (safe default — stops the loop).
 
         After extraction, the raw value is validated against known agent names.
         If the LLM returns something like "property_agent | FINISH", we scan the
         value for a known agent name and return that instead of defaulting to FINISH.
         """
-        cleaned = _FENCE_RE.sub(r"\1", text).strip()
-
-        raw = None
-        try:
-            data = json.loads(cleaned)
-            if isinstance(data, dict) and "next" in data:
-                raw = str(data["next"])
-        except json.JSONDecodeError:
-            pass
-
-        if raw is None:
-            m = _JSON_RE.search(cleaned)
-            if m:
-                try:
-                    data = json.loads(m.group())
-                    if isinstance(data, dict) and "next" in data:
-                        raw = str(data["next"])
-                except json.JSONDecodeError:
-                    pass
+        data = parse_json_object(text, "next")
+        raw = str(data["next"]) if data is not None else None
 
         if raw is None:
             logger.warning("[supervisor] could not parse next from %r — defaulting to FINISH", text[:200])

@@ -8,6 +8,12 @@ Every user message travels through this sequence:
   START
     │
     ▼
+  normaliser          ← Step 0: LLM cleans the message; resolves any pending item
+    │
+    ├──► synthesiser            (pending confirmed / cancelled — answer is ready)
+    ├──► <agent>                (pending corrected — "direct", skips supervisor routing)
+    │
+    ▼
   supervisor          ← Step 1: LLM decides which agent to call next (or FINISH)
     │
     ├──► conversational_agent ──┐
@@ -20,6 +26,15 @@ Every user message travels through this sequence:
           │
           ▼
          END
+
+NORMALISER
+----------
+The supervisor sees no chat history, so a bare "yes" to "save this expense?"
+cannot be routed by it.  The normaliser asks each agent for a pending item
+(BaseAgent.pending_summary) and classifies the message against it in the same
+LLM call that cleans the text.  On a correction it sets state["direct"], and
+the supervisor router then sends the flow straight to the synthesiser once
+that agent has answered.
 
 TURN CAP
 --------
@@ -55,10 +70,33 @@ if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
 from .agent_registry import load_agents
-from .nodes import AgentNode, SupervisorNode, SynthesiserNode
+from .nodes import AgentNode, NormaliserNode, SupervisorNode, SynthesiserNode
 from .state import MAX_AGENT_TURNS, GraphState
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Router — conditional edge out of the normaliser node
+# ---------------------------------------------------------------------------
+
+def _make_normaliser_router(agent_names: set[str]):
+    """
+    Returns the routing function used as a conditional edge from the normaliser.
+
+      - state["next"] is a known agent name  →  that agent (pending correction)
+      - state["next"] == "synthesiser"       →  synthesiser (confirm / cancel)
+      - anything else                        →  "supervisor" (normal path)
+    """
+
+    def _route(state: GraphState) -> str:
+        next_node = state.get("next", "")
+        if next_node in agent_names or next_node == "synthesiser":
+            logger.info("[normaliser-router] → %r (skipping supervisor)", next_node)
+            return next_node
+        return "supervisor"
+
+    return _route
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +112,10 @@ def _make_router(agent_names: set[str]):
 
     Decision logic (in priority order):
       1. If turns >= MAX_AGENT_TURNS  →  force "synthesiser" (loop guard).
-      2. If state["next"] is a known agent name  →  route to that agent.
-      3. Otherwise (supervisor said FINISH or returned garbage)  →  "synthesiser".
+      2. If state["direct"] and an agent has answered  →  "synthesiser"
+         (the normaliser already chose the agent; nothing left to route).
+      3. If state["next"] is a known agent name  →  route to that agent.
+      4. Otherwise (supervisor said FINISH or returned garbage)  →  "synthesiser".
 
     Parameters
     ----------
@@ -91,6 +131,11 @@ def _make_router(agent_names: set[str]):
                 state["turns"],
                 MAX_AGENT_TURNS,
             )
+            return "synthesiser"
+
+        # --- Direct path: normaliser picked the agent, which has now answered ---
+        if state.get("direct") and state.get("agent_outputs"):
+            logger.info("[router] direct turn complete → synthesiser")
             return "synthesiser"
 
         # --- Normal path: honour the supervisor's routing decision ---
@@ -128,9 +173,10 @@ class MultiAgentGraph:
 
     Build order inside __init__
     ---------------------------
-    1. Create the shared LLM (used by supervisor and synthesiser).
+    1. Create the shared LLM (used by normaliser, supervisor and synthesiser).
     2. Load enabled agents from agents.json via agent_registry.
-    3. Build the supervisor prompt with the live agent list injected.
+    3. Build the supervisor prompt with the live agent list injected;
+       load the normaliser and synthesiser prompts.
     4. Create node functions via factories in nodes.py.
     5. Wire nodes and edges into a StateGraph.
     6. Compile the graph.
@@ -139,7 +185,7 @@ class MultiAgentGraph:
     def __init__(self) -> None:
 
         # -----------------------------------------------------------------
-        # 1. Shared LLM — same model drives both supervisor and synthesiser
+        # 1. Shared LLM — same model drives normaliser, supervisor and synthesiser
         # -----------------------------------------------------------------
         llm = create_llm(Config.LLM_PROVIDER, Config.LLM_MODEL_NAME)
 
@@ -162,12 +208,14 @@ class MultiAgentGraph:
             .replace("{agents}", agents_block)   # fills the {agents} placeholder
         )
         synthesiser_prompt = load_prompt(Config.SYNTHESISER_PROMPT_FILE)
+        normaliser_prompt = load_prompt(Config.NORMALISER_PROMPT_FILE)
 
         # -----------------------------------------------------------------
         # 4. Instantiate node objects
         #    Each class closes over its dependencies (llm, prompt, agent
         #    instance) and is callable as a plain function(state) -> dict.
         # -----------------------------------------------------------------
+        normaliser_node = NormaliserNode(llm, normaliser_prompt, agents)
         supervisor_node = SupervisorNode(llm, supervisor_prompt, agent_names)
         synthesiser_node = SynthesiserNode(llm, synthesiser_prompt)
         # Agent nodes are created in the loop below (one per enabled agent)
@@ -178,6 +226,7 @@ class MultiAgentGraph:
         builder = StateGraph(GraphState)
 
         # Fixed nodes — always present regardless of agents.json contents
+        builder.add_node("normaliser", normaliser_node)
         builder.add_node("supervisor", supervisor_node)
         builder.add_node("synthesiser", synthesiser_node)
 
@@ -188,14 +237,19 @@ class MultiAgentGraph:
             # Every agent loops back to the supervisor after it finishes
             builder.add_edge(agent.name, "supervisor")
 
-        # Entry point: graph always starts at the supervisor
-        builder.add_edge(START, "supervisor")
+        # Entry point: graph always starts at the normaliser
+        builder.add_edge(START, "normaliser")
 
-        # Conditional edge from supervisor — router function decides the target.
+        # Conditional edges — router functions decide the target.
         # route_map tells LangGraph every possible return value of _route()
         # and which node name it maps to.
         route_map = {name: name for name in agent_names}
         route_map["synthesiser"] = "synthesiser"
+        builder.add_conditional_edges(
+            "normaliser",
+            _make_normaliser_router(agent_names),
+            {**route_map, "supervisor": "supervisor"},
+        )
         builder.add_conditional_edges("supervisor", _make_router(agent_names), route_map)
 
         # Synthesiser is terminal — no further routing after it finishes
