@@ -1,5 +1,9 @@
+import json
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
+
+import pytest
 
 from agents.expenditure.ledger import Expense, ExpenseLedger
 from agents.expenditure.replies import format_question, format_totals
@@ -73,6 +77,48 @@ def test_pending_roundtrip_and_confirm(tmp_path):
 def test_replies_format():
     assert format_totals(Decimal("1000"), Decimal("12.5")) == "prev_month: €1000, current_month: €12.50"
     e = Expense(date(2026, 10, 18), "Colruyt", Decimal("19.00"))
-    assert format_question(e) == (
-        "I understood: Colruyt, €19, 2026-10-18. Reply yes to save, or send the corrected version."
+    assert format_question(e, "amount unclear") == (
+        "I understood: Colruyt, €19, 2026-10-18 (problem: amount unclear). "
+        "Reply yes to save, no to discard, or send the corrected version."
     )
+
+
+def test_question_with_unknown_amount():
+    e = Expense(date(2026, 10, 18), "Colruyt", None)
+    assert format_question(e, "amount missing") == (
+        "I understood: Colruyt, amount unknown, 2026-10-18 (problem: amount missing). "
+        "Reply yes to save, no to discard, or send the corrected version."
+    )
+
+
+def test_pending_roundtrip_with_unknown_amount(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    e = Expense(date(2026, 10, 18), "Colruyt", None)
+    ledger.set_pending(e, "amount missing")
+    assert ledger.get_pending() == (e, "amount missing")
+
+
+@pytest.mark.parametrize("content", ["", "{not json", '{"expense": {}}', "[]"])
+def test_corrupt_pending_treated_as_none(tmp_path, content):
+    (tmp_path / "pending.json").write_text(content)
+    assert ExpenseLedger(tmp_path).get_pending() is None
+
+
+@pytest.mark.parametrize("content", ["", "[{trunc", '{"a": 1}'])
+def test_corrupt_history_treated_as_empty(tmp_path, content):
+    (tmp_path / "history.json").write_text(content)
+    ledger = ExpenseLedger(tmp_path)
+    assert ledger.undo_last() is None
+    ledger.add(date(2026, 10, 1), "A", 5)
+    assert ledger.undo_last().place == "A"
+
+
+def test_json_writes_are_atomic(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    ledger.add(date(2026, 10, 1), "A", 5)
+    with patch("agents.expenditure.ledger.os.replace", side_effect=OSError("disk")):
+        with pytest.raises(OSError):
+            ledger.add(date(2026, 10, 2), "B", 6)
+    # The old history file is intact and no temp files are left behind
+    assert len(json.loads((tmp_path / "history.json").read_text())) == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["2026-10.txt", "history.json"]

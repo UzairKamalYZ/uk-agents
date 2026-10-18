@@ -1,25 +1,35 @@
 import json
+import logging
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Anything a corrupt/truncated/hand-edited JSON file can raise while being decoded.
+_CORRUPT = (OSError, ValueError, KeyError, TypeError, AttributeError, InvalidOperation)
 
 
 @dataclass(frozen=True)
 class Expense:
     date: date
     place: str
-    amount: Decimal
+    amount: Decimal | None  # None only for a pending item whose amount is still unknown
 
     def line(self) -> str:
         return f"{self.date.isoformat()} | {self.place} | {self.amount:.2f}"
 
     def to_dict(self) -> dict:
-        return {"date": self.date.isoformat(), "place": self.place, "amount": str(self.amount)}
+        amount = None if self.amount is None else str(self.amount)
+        return {"date": self.date.isoformat(), "place": self.place, "amount": amount}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Expense":
-        return cls(date.fromisoformat(d["date"]), d["place"], Decimal(d["amount"]))
+        amount = None if d["amount"] is None else Decimal(d["amount"])
+        return cls(date.fromisoformat(d["date"]), d["place"], amount)
 
 
 class ExpenseLedger:
@@ -51,7 +61,7 @@ class ExpenseLedger:
                 if lines[i] == target:
                     del lines[i]
                     break
-            path.write_text("".join(f"{ln}\n" for ln in lines), encoding="utf-8")
+            self._write_text(path, "".join(f"{ln}\n" for ln in lines))
         self._write_json(self._history_path, history)
         return expense
 
@@ -65,8 +75,12 @@ class ExpenseLedger:
     def get_pending(self) -> tuple[Expense, str] | None:
         if not self._pending_path.exists():
             return None
-        data = json.loads(self._pending_path.read_text(encoding="utf-8"))
-        return Expense.from_dict(data["expense"]), data["problem"]
+        try:
+            data = json.loads(self._pending_path.read_text(encoding="utf-8"))
+            return Expense.from_dict(data["expense"]), str(data["problem"])
+        except _CORRUPT:
+            logger.exception("expenses: corrupt %s — treating as no pending item", self._pending_path)
+            return None
 
     def clear_pending(self) -> None:
         self._pending_path.unlink(missing_ok=True)
@@ -112,8 +126,26 @@ class ExpenseLedger:
     def _read_list(self, path: Path) -> list:
         if not path.exists():
             return []
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except _CORRUPT:
+            data = None
+        if not isinstance(data, list):
+            logger.error("expenses: corrupt %s — treating as empty", path)
+            return []
+        return data
 
     def _write_json(self, path: Path, data) -> None:
+        self._write_text(path, json.dumps(data))
+
+    def _write_text(self, path: Path, text: str) -> None:
+        """Atomic write: temp file in the same directory, then os.replace."""
         self._root.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data), encoding="utf-8")
+        fd, tmp = tempfile.mkstemp(dir=self._root, prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise

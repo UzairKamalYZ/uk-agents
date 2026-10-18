@@ -1,3 +1,4 @@
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -7,9 +8,12 @@ from core.src.model.mcp_tools import _mcp
 from core.src.utils import load_prompt
 
 from .ledger import ExpenseLedger
-from .replies import format_eur, format_logged
+from .replies import format_amount, format_logged, format_need_amount
+
+logger = logging.getLogger(__name__)
 
 _PROMPT_FILE = Path(__file__).parent / "prompts" / "System_Prompt.txt"
+UNAVAILABLE_REPLY = "Expense tracking is unavailable right now — nothing was saved."
 
 
 class ExpenditureAgent(BaseAgent):
@@ -26,10 +30,22 @@ class ExpenditureAgent(BaseAgent):
         return NullRagContextManager()
 
     def get_mcp_tools(self) -> list:
-        return _mcp.langchain_tools(server_name="expenses")
+        tools = _mcp.langchain_tools(server_name="expenses")
+        # Without tools the LLM could claim a save that never happened — fail closed in ask().
+        self._tools_available = bool(tools)
+        if not self._tools_available:
+            logger.error("ExpenditureAgent: no tools from the 'expenses' MCP server — expense tracking disabled")
+        return tools
 
     def _today(self) -> date:
         return date.today()
+
+    def ask(self, prompt: str, stream: bool = False, session_id: str = None):
+        if not self._tools_available:
+            return iter([UNAVAILABLE_REPLY]) if stream else UNAVAILABLE_REPLY
+        today = self._today()
+        dated = f"Today is {today.isoformat()} ({today.strftime('%A')}).\n\n{prompt}"
+        return super().ask(dated, stream=stream, session_id=session_id)
 
     # Single owner: session_id is ignored for pending state.
 
@@ -38,9 +54,12 @@ class ExpenditureAgent(BaseAgent):
         if pending is None:
             return None
         e, problem = pending
-        return f"{e.place}, {format_eur(e.amount)}, {e.date.isoformat()} (problem: {problem})"
+        return f"{e.place}, {format_amount(e.amount)}, {e.date.isoformat()} (problem: {problem})"
 
     def confirm_pending(self, session_id: str) -> str:
+        pending = self._ledger.get_pending()
+        if pending is not None and pending[0].amount is None:
+            return format_need_amount(pending[0])
         e = self._ledger.confirm_pending()
         if e is None:
             return "Nothing to confirm."

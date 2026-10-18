@@ -21,8 +21,19 @@ def format_undone(e: Expense, prev: Decimal, cur: Decimal) -> str:
     return f"Removed {format_eur(e.amount)} at {e.place} ({e.date.isoformat()}).\n{format_totals(prev, cur)}"
 
 
-def format_question(e: Expense) -> str:
+def format_amount(amount: Decimal | None) -> str:
+    return "amount unknown" if amount is None else format_eur(amount)
+
+
+def format_question(e: Expense, problem: str) -> str:
     return (
-        f"I understood: {e.place}, {format_eur(e.amount)}, {e.date.isoformat()}. "
-        "Reply yes to save, or send the corrected version."
+        f"I understood: {e.place}, {format_amount(e.amount)}, {e.date.isoformat()} (problem: {problem}). "
+        "Reply yes to save, no to discard, or send the corrected version."
+    )
+
+
+def format_need_amount(e: Expense) -> str:
+    return (
+        f"I still need the amount for {e.place} ({e.date.isoformat()}). "
+        "Send the corrected version, or no to discard."
     )

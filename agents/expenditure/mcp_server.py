@@ -22,47 +22,70 @@ def _ledger(ledger: ExpenseLedger | None) -> ExpenseLedger:
     return ledger or ExpenseLedger(Path(Config.EXPENSES_DIR))
 
 
-def _parse(date_str: str, amount) -> tuple[date, Decimal] | str:
-    """Return (date, amount) or an error string."""
+def _parse_date(date_str: str | None) -> date | str:
+    """Return the date (empty/None → today) or an error string."""
+    if date_str is None or not str(date_str).strip():
+        return _today()
     try:
-        parsed_date = date.fromisoformat(str(date_str))
+        return date.fromisoformat(str(date_str).strip())
     except ValueError:
         return f"Invalid date '{date_str}', expected YYYY-MM-DD."
+
+
+def _parse_amount(amount) -> Decimal | str:
+    """Return the amount rounded to cents, or an error string. Validated after rounding."""
     try:
-        parsed_amount = Decimal(str(amount).replace(",", "."))
-        valid = parsed_amount.is_finite() and parsed_amount > 0
-    except InvalidOperation:
+        parsed = Decimal(str(amount).replace(",", "."))
+        valid = parsed.is_finite()
+        if valid:
+            parsed = ExpenseLedger._to_amount(parsed)
+            valid = parsed > 0
+    except (InvalidOperation, ValueError):
         valid = False
     if not valid:
         return f"Invalid amount '{amount}', expected a positive number."
-    return parsed_date, parsed_amount
+    return parsed
 
 
-def add_expense(date: str, place: str, amount: float, *, ledger: ExpenseLedger | None = None) -> str:
-    """Save a clearly understood expense. date is YYYY-MM-DD."""
-    parsed = _parse(date, amount)
-    if isinstance(parsed, str):
-        return parsed
+def add_expense(place: str, amount: float, date: str | None = None,
+                *, ledger: ExpenseLedger | None = None) -> str:
+    """Save a clearly understood expense.
+
+    amount is required and must be positive. date is YYYY-MM-DD; omit it (or pass empty) for today.
+    """
+    parsed_date = _parse_date(date)
+    if isinstance(parsed_date, str):
+        return parsed_date
+    parsed_amount = _parse_amount(amount)
+    if isinstance(parsed_amount, str):
+        return parsed_amount
     led = _ledger(ledger)
-    expense = led.add(parsed[0], place, parsed[1])
+    expense = led.add(parsed_date, place, parsed_amount)
     led.clear_pending()
     prev, cur = led.totals(_today())
     return format_logged(expense, prev, cur)
 
 
-def propose_expense(date: str, place: str, amount: float, problem: str,
+def propose_expense(place: str, problem: str, amount: float | None = None, date: str | None = None,
                     *, ledger: ExpenseLedger | None = None) -> str:
-    """Use instead of saving when anything about the input looks wrong or uncertain.
+    """Use instead of saving when anything about the input looks wrong, uncertain, or missing.
 
-    Stores the expense as pending and returns a confirmation question. date is YYYY-MM-DD.
+    Stores the expense as pending and returns a confirmation question. problem says what looks wrong.
+    amount may be omitted when it is missing or unintelligible. date is YYYY-MM-DD; omit it
+    (or pass empty) for today.
     """
-    parsed = _parse(date, amount)
-    if isinstance(parsed, str):
-        return parsed
+    parsed_date = _parse_date(date)
+    if isinstance(parsed_date, str):
+        return parsed_date
+    parsed_amount = None
+    if amount is not None and str(amount).strip():
+        parsed_amount = _parse_amount(amount)
+        if isinstance(parsed_amount, str):
+            return parsed_amount
     led = _ledger(ledger)
-    expense = Expense(parsed[0], ExpenseLedger._clean_place(place), ExpenseLedger._to_amount(parsed[1]))
+    expense = Expense(parsed_date, ExpenseLedger._clean_place(place), parsed_amount)
     led.set_pending(expense, problem)
-    return format_question(expense)
+    return format_question(expense, problem)
 
 
 def undo_last_expense(*, ledger: ExpenseLedger | None = None) -> str:
@@ -83,13 +106,13 @@ def get_expense_totals(*, ledger: ExpenseLedger | None = None) -> str:
 
 # Thin wrappers keep the `ledger` kwarg out of the tool schemas.
 @server.tool(name="add_expense", description=add_expense.__doc__)
-def _add_expense(date: str, place: str, amount: float) -> str:
-    return add_expense(date, place, amount)
+def _add_expense(place: str, amount: float, date: str | None = None) -> str:
+    return add_expense(place, amount, date)
 
 
 @server.tool(name="propose_expense", description=propose_expense.__doc__)
-def _propose_expense(date: str, place: str, amount: float, problem: str) -> str:
-    return propose_expense(date, place, amount, problem)
+def _propose_expense(place: str, problem: str, amount: float | None = None, date: str | None = None) -> str:
+    return propose_expense(place, problem, amount, date)
 
 
 @server.tool(name="undo_last_expense", description=undo_last_expense.__doc__)

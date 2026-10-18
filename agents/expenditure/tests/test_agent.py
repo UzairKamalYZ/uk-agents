@@ -22,7 +22,7 @@ def agent(tmp_path):
 
 def _pending(tmp_path, amount="19"):
     ExpenseLedger(tmp_path).set_pending(
-        Expense(date(2026, 10, 18), "Colruyt", Decimal(amount)), "amount unclear"
+        Expense(date(2026, 10, 18), "Colruyt", None if amount is None else Decimal(amount)), "amount unclear"
     )
 
 
@@ -49,3 +49,37 @@ def test_uses_expenses_mcp_server(agent):
     with patch("agents.expenditure.agent._mcp") as mcp:
         agent.get_mcp_tools()
     mcp.langchain_tools.assert_called_once_with(server_name="expenses")
+
+
+def test_pending_summary_with_unknown_amount(agent, tmp_path):
+    _pending(tmp_path, amount=None)
+    assert agent.pending_summary("s") == "Colruyt, amount unknown, 2026-10-18 (problem: amount unclear)"
+
+
+def test_confirm_with_unknown_amount_keeps_pending_and_saves_nothing(agent, tmp_path):
+    _pending(tmp_path, amount=None)
+    assert agent.confirm_pending("s") == (
+        "I still need the amount for Colruyt (2026-10-18). Send the corrected version, or no to discard."
+    )
+    assert not (tmp_path / "2026-10.txt").exists()
+    assert agent.pending_summary("s") is not None
+
+
+def test_ask_prefixes_today(agent):
+    agent.model.ask.return_value = "ok"
+    assert agent.ask("Colruyt 90", session_id="x") == "ok"
+    agent.model.ask.assert_called_once_with("Today is 2026-10-18 (Sunday).\n\nColruyt 90", session_id="x")
+
+
+def test_ask_without_tools_refuses_without_calling_model(tmp_path, caplog):
+    with patch("core.src.base_agent.create_llm"), \
+         patch("core.src.base_agent.LlmModelGraph"), \
+         patch("agents.expenditure.agent.Config") as cfg, \
+         patch("agents.expenditure.agent._mcp") as mcp:
+        cfg.EXPENSES_DIR = str(tmp_path)
+        mcp.langchain_tools.return_value = []
+        with caplog.at_level("ERROR"):
+            a = ExpenditureAgent(session_id="s")
+    assert "expenses" in caplog.text
+    assert a.ask("Colruyt 90") == "Expense tracking is unavailable right now — nothing was saved."
+    a.model.ask.assert_not_called()
