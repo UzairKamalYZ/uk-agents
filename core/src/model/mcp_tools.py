@@ -19,6 +19,7 @@ The registry is built automatically at import time from that file.
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 from ..config.config import Config
@@ -48,6 +49,7 @@ def _load_registry(config_path: Path) -> MCPRegistry:
         url = entry.get("url")
 
         if name and command:
+            command = [sys.executable if part == "{python}" else part for part in command]
             logger.info("mcp-tools: adding stdio server '%s'", name)
             registry.register(name, command)
 

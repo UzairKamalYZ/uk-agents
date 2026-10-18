@@ -220,3 +220,13 @@ class TestMCPRegistry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_python_placeholder_resolves_to_sys_executable():
+    import sys
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Path(d) / "mcp.json"
+        cfg.write_text(json.dumps({"servers": [{"name": "x", "command": ["{python}", "-m", "x"]}]}))
+        registry = _load_registry(cfg)
+    assert registry._servers["x"]._command == [sys.executable, "-m", "x"]
