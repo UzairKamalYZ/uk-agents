@@ -49,10 +49,15 @@ def test_explicit_model_size_overrides_config():
 
 def test_config_default_whisper_model_is_small():
     # Subprocess: other tests stub Config process-wide, so check the real default in isolation.
+    # dotenv is neutralised so a developer .env cannot leak WHISPER_MODEL into the child.
     env = {k: v for k, v in os.environ.items() if k != "WHISPER_MODEL"}
+    env.update(PROMPT_FILE="p", INTERACTION_FILE="i", REFORMULATION_PROMPT="r")
+    code = (
+        "import dotenv; dotenv.load_dotenv = lambda *a, **k: None; "
+        "from core.src.config.config import Config; print(Config.WHISPER_MODEL)"
+    )
     root = Path(__file__).parents[3]
     out = subprocess.run(
-        [sys.executable, "-c", "from core.src.config.config import Config; print(Config.WHISPER_MODEL)"],
-        cwd=root, env=env, capture_output=True, text=True, check=True,
+        [sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True, check=True,
     )
     assert out.stdout.strip() == "small"
