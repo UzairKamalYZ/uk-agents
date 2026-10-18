@@ -155,3 +155,36 @@ def test_owner_only_pending_ignored_for_non_owner():
     exp.instance.pending_summary.assert_not_called()
     assert "Pending: None" in llm.calls[0][0].content
     assert out == {"user_input": "yes"}
+
+
+ERROR = "Sorry, something went wrong with the pending item. Please try again."
+
+
+def test_pending_summary_error_treated_as_no_pending():
+    broken = _entry("expenditure_tracker")
+    broken.instance.pending_summary.side_effect = RuntimeError("corrupt")
+    llm = FakeLLM(_reply("hello"))
+    out = _node(llm, [broken])(_state("hello"))
+    assert out == {"user_input": "hello"}
+    assert "Pending: None" in llm.calls[0][0].content
+
+
+def test_confirm_error_replies_sorry():
+    e = _entry("expenditure_tracker", pending=SUMMARY)
+    e.instance.confirm_pending.side_effect = OSError("disk")
+    out = _node(FakeLLM(_reply("yes", "confirm")), [e])(_state())
+    assert out == {"agent_outputs": {"expenditure_tracker": ERROR}, "next": "synthesiser"}
+
+
+def test_cancel_error_replies_sorry():
+    e = _entry("expenditure_tracker", pending=SUMMARY)
+    e.instance.discard_pending.side_effect = OSError("disk")
+    out = _node(FakeLLM(_reply("no", "cancel")), [e])(_state("no"))
+    assert out == {"agent_outputs": {"expenditure_tracker": ERROR}, "next": "synthesiser"}
+
+
+def test_unrelated_discard_error_replies_sorry():
+    e = _entry("expenditure_tracker", pending=SUMMARY)
+    e.instance.discard_pending.side_effect = OSError("disk")
+    out = _node(FakeLLM(_reply("weather?", "unrelated")), [e])(_state("weather?"))
+    assert out == {"agent_outputs": {"expenditure_tracker": ERROR}, "next": "synthesiser"}

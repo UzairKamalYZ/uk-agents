@@ -25,6 +25,8 @@ Outcomes
     cancel                                → agent.discard_pending()        → synthesiser
     correction                            → cleaned text + summary, direct → that agent
     unrelated / null                      → agent.discard_pending()        → supervisor
+    pending_summary raises                → treated as no pending for that agent
+    confirm/discard_pending raises        → PENDING_ERROR_REPLY            → synthesiser
 
 Verdicts are matched case-insensitively after stripping whitespace.
 
@@ -53,6 +55,7 @@ REASK_REPLY = (
     "Sorry, I didn't catch that. Pending: {summary}. "
     "Reply yes to save, no to discard, or send the corrected version."
 )
+PENDING_ERROR_REPLY = "Sorry, something went wrong with the pending item. Please try again."
 _VERDICTS = {"confirm", "cancel", "correction", "unrelated"}
 
 
@@ -105,11 +108,6 @@ class NormaliserNode:
         text = reply[0]
         logger.info("[normaliser] pending on %s → %s", name, verdict)
 
-        if verdict == "confirm":
-            return {"agent_outputs": {name: agent.confirm_pending(session_id)}, "next": "synthesiser"}
-        if verdict == "cancel":
-            agent.discard_pending(session_id)
-            return {"agent_outputs": {name: DISCARDED_REPLY}, "next": "synthesiser"}
         if verdict == "correction":
             return {
                 "user_input": f"{text}\n\n(Correction to the pending expense: {summary})",
@@ -117,8 +115,17 @@ class NormaliserNode:
                 "direct": True,
             }
 
+        try:
+            if verdict == "confirm":
+                return {"agent_outputs": {name: agent.confirm_pending(session_id)}, "next": "synthesiser"}
+            agent.discard_pending(session_id)
+        except Exception:
+            logger.exception("[normaliser] %s failed resolving pending item (verdict=%s)", name, verdict)
+            return {"agent_outputs": {name: PENDING_ERROR_REPLY}, "next": "synthesiser"}
+
+        if verdict == "cancel":
+            return {"agent_outputs": {name: DISCARDED_REPLY}, "next": "synthesiser"}
         # "unrelated" or null — the user moved on
-        agent.discard_pending(session_id)
         return {"user_input": text}
 
     # ------------------------------------------------------------------
@@ -130,7 +137,11 @@ class NormaliserNode:
         for entry in self._agents:
             if entry.owner_only and not is_owner:
                 continue
-            summary = entry.instance.pending_summary(session_id)
+            try:
+                summary = entry.instance.pending_summary(session_id)
+            except Exception:
+                logger.exception("[normaliser] pending_summary failed for %s — treating as no pending", entry.name)
+                continue
             if summary is not None:
                 return entry, summary
         return None, None
