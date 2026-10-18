@@ -49,6 +49,8 @@ class Config:
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
     EXPENSES_DIR = str(_PROJECT_ROOT / os.getenv("EXPENSES_DIR", "expenses"))
+    # Local faster-whisper model size for voice transcription
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))
 
     # ---------------------------------------------------------------------------
