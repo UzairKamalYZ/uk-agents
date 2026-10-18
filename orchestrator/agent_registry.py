@@ -21,6 +21,7 @@ class AgentEntry:
     instance: object   # live BaseAgent-compatible object (must have .ask())
     llm_provider: str  # provider used by this agent (e.g. "anthropic")
     llm_model: str     # model name used by this agent (e.g. "claude-opus-5-5")
+    owner_only: bool = False  # True → only the bot owner may use this agent
 
 
 def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
@@ -72,6 +73,7 @@ def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
             instance=instance,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            owner_only=spec.get("owner_only", False),
         ))
 
     return entries

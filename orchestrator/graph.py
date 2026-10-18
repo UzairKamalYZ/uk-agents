@@ -183,7 +183,7 @@ class MultiAgentGraph:
 
         # Dynamic agent nodes — one per enabled entry in agents.json
         for agent in agents:
-            node_fn = AgentNode(agent.name, agent.instance)
+            node_fn = AgentNode(agent.name, agent.instance, owner_only=agent.owner_only)
             builder.add_node(agent.name, node_fn)
             # Every agent loops back to the supervisor after it finishes
             builder.add_edge(agent.name, "supervisor")
@@ -211,36 +211,36 @@ class MultiAgentGraph:
     # Public interface
     # ------------------------------------------------------------------
 
-    def stream(self, user_input: str, session_id: str = "default"):
+    @staticmethod
+    def _initial_state(user_input: str, session_id: str, is_owner: bool) -> GraphState:
+        """Fresh state for one user turn: everything empty, turns at zero."""
+        return {
+            "user_input": user_input,
+            "session_id": session_id,
+            "messages": [],
+            "agent_outputs": {},
+            "next": "",
+            "turns": 0,
+            "is_owner": is_owner,
+            "raw_input": user_input,
+            "direct": False,
+        }
+
+    def stream(self, user_input: str, session_id: str = "default", *, is_owner: bool = False):
         """
         Run the full pipeline and yield LangGraph update-event dicts.
 
         Each yielded event is {"node_name": {state_delta}} — one dict per
         node execution.  Used internally by ask() to collect the final state.
         """
-        # Initial state: everything empty, turns counter at zero
-        initial_state: GraphState = {
-            "user_input": user_input,
-            "session_id": session_id,
-            "messages": [],
-            "agent_outputs": {},
-            "next": "",
-            "turns": 0,
-        }
+        initial_state = self._initial_state(user_input, session_id, is_owner)
         yield from self._graph.stream(initial_state, stream_mode="updates")
 
-    def stream_tokens(self, user_input: str, session_id: str = "default"):
+    def stream_tokens(self, user_input: str, session_id: str = "default", *, is_owner: bool = False):
         """
         Yield text tokens from the synthesiser LLM as they are generated.
         """
-        initial_state: GraphState = {
-            "user_input": user_input,
-            "session_id": session_id,
-            "messages": [],
-            "agent_outputs": {},
-            "next": "",
-            "turns": 0,
-        }
+        initial_state = self._initial_state(user_input, session_id, is_owner)
 
         # stream_mode="messages" yields (AIMessageChunk, metadata) tuples.
         # metadata["langgraph_node"] tells us which graph node produced the chunk.
@@ -252,7 +252,7 @@ class MultiAgentGraph:
                 if chunk.text:
                     yield chunk.text
 
-    def ask(self, user_input: str, session_id: str = "default") -> str:
+    def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
         """
         Blocking call — runs the full pipeline and returns the synthesiser's answer.
 
@@ -261,7 +261,7 @@ class MultiAgentGraph:
         extracts and returns as a plain string.
         """
         final_state: dict[str, Any] = {}
-        for event in self.stream(user_input, session_id=session_id):
+        for event in self.stream(user_input, session_id=session_id, is_owner=is_owner):
             final_state.update(event)   # accumulate all node updates
 
         # Pull agent_outputs out of each node's update dict and merge them

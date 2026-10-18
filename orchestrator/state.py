@@ -69,6 +69,17 @@ class GraphState(TypedDict):
         Running count of agent-node invocations this turn.
         Incremented by every agent node.  Checked by the router to enforce
         the MAX_AGENT_TURNS cap.
+
+    is_owner : bool
+        True when the caller is the bot's owner.  Agents flagged
+        "owner_only" in agents.json refuse to run when this is False.
+
+    raw_input : str
+        The user's message exactly as received, before any normalisation.
+
+    direct : bool
+        True when a pre-supervisor step has already decided the routing
+        (bypassing the supervisor LLM).  False at graph entry.
     """
 
     user_input: str
@@ -77,3 +88,6 @@ class GraphState(TypedDict):
     agent_outputs: dict[str, str]
     next: str
     turns: int
+    is_owner: bool
+    raw_input: str
+    direct: bool

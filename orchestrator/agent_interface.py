@@ -64,6 +64,8 @@ class OrchestratorAgent:
         prompt: str,
         stream: bool = False,
         session_id: str = "default",
+        *,
+        is_owner: bool = False,
     ) -> str | Generator[str, None, None]:
         """
         Ask the multi-agent pipeline a question.
@@ -75,6 +77,8 @@ class OrchestratorAgent:
                      if False (default), blocks until the full answer is ready
         session_id : passed through to each agent so per-session history is
                      maintained correctly across turns
+        is_owner   : True when the caller is the bot's owner; agents marked
+                     "owner_only" in agents.json refuse non-owner requests
 
         Returns
         -------
@@ -83,12 +87,14 @@ class OrchestratorAgent:
         """
         if stream:
             # Return a generator — the caller iterates it to receive chunks
-            return self._stream_tokens(prompt, session_id)
+            return self._stream_tokens(prompt, session_id, is_owner)
 
         # Blocking path — run the full graph and return the final string
-        return self._graph.ask(prompt, session_id=session_id)
+        return self._graph.ask(prompt, session_id=session_id, is_owner=is_owner)
 
-    def _stream_tokens(self, prompt: str, session_id: str) -> Generator[str, None, None]:
+    def _stream_tokens(
+        self, prompt: str, session_id: str, is_owner: bool = False
+    ) -> Generator[str, None, None]:
         """
         Yield real tokens from the synthesiser LLM as they are generated.
 
@@ -101,7 +107,7 @@ class OrchestratorAgent:
         The caller (REST SSE endpoint, Telegram live-edit) receives chunks
         immediately as the LLM writes them, not after the whole pipeline finishes.
         """
-        yield from self._graph.stream_tokens(prompt, session_id=session_id)
+        yield from self._graph.stream_tokens(prompt, session_id=session_id, is_owner=is_owner)
 
     def close(self) -> None:
         """No persistent resources to release — graph is stateless between calls."""
