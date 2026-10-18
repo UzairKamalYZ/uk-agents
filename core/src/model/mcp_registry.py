@@ -39,7 +39,7 @@ _INIT_PAYLOAD = (
         "params": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": {"name": "property-agent", "version": "1.0"},
+            "clientInfo": {"name": "uk-agents", "version": "1.0"},
         },
     })
     + "\n"

@@ -1,15 +1,15 @@
-# CLAUDE.md — AI Assistant Guide for my-property-agent
+# CLAUDE.md — AI Assistant Guide for uk-agents
 
 ## Project Overview
 
-**my-property-agent** is a conversational AI system for property search. Users describe what they're looking for in natural language and the agent retrieves relevant listings via a **LangGraph RAG pipeline** backed by a FAISS or Pinecone vector store. The system exposes multiple client interfaces — REST API, Streamlit web UI, Telegram bot, and a scheduled cron job — all built on a shared `BaseClient` interface.
+**uk-agents** is Uzair Kamal's (UK) personal repository of AI agents. There will be many agents serving unrelated purposes (property search, stocks, email, WhatsApp, chat, and more to come). Every agent extends the shared `BaseAgent` in `core/` (Claude LLM, LangGraph pipeline, optional RAG over Pinecone, MCP tools) and is registered in `agents.json`. User-facing clients — REST API, Streamlit web UI, Telegram bot, and a scheduled cron job — share the `OrchestratorAgent`, whose supervisor routes each request to the right agent; agents that need to run on their own have standalone entrypoints (`agents/<name>/main.py`). Do not assume a new agent is property-related.
 
 ---
 
 ## Repository Structure
 
 ```
-my-property-agent/
+uk-agents/
 ├── .env                             # Runtime configuration (project root — always here)
 ├── pyproject.toml                   # Project metadata and dependencies
 ├── logging_config.py                # Central logging setup → logs/agent.log
@@ -25,15 +25,14 @@ my-property-agent/
 │       │   └── config.py            # Settings loaded from .env via absolute path
 │       ├── model/
 │       │   ├── llm_model_graph.py   # LangGraph RAG pipeline (reformulate→retrieve→generate)
-│       │   ├── llm_factory.py       # LLM provider factory (Ollama, …)
+│       │   ├── llm_factory.py       # LLM provider factory (Anthropic Claude)
 │       │   ├── embedder.py          # SentenceTransformer embeddings + vector search
 │       │   ├── rag_context_manager.py  # Retrieves and formats RAG context
 │       │   ├── context_builder.py   # Formats property listing dicts as readable text
 │       │   └── session_manager.py   # SQLite-backed session history
 │       ├── persistence/
 │       │   ├── vector_store.py      # Abstract base (add / search)
-│       │   ├── factory.py           # Selects FAISS or Pinecone at runtime
-│       │   ├── faiss_store.py       # Local FAISS implementation
+│       │   ├── factory.py           # Selects the vector store backend (Pinecone)
 │       │   └── pinecone_store.py    # Cloud Pinecone implementation
 │       ├── housing/
 │       │   ├── housing_data_collector.py   # Streams CSV → embedding-ready text
@@ -115,7 +114,6 @@ class BaseClient(ABC):
 ### Vector Store Backends (`agentP/src/persistence/`)
 
 - `VectorStore` — abstract base with `add_vectors(vectors)` and `search(query_vector, k)`.
-- `FAISSStore` — local L2-indexed FAISS store.
 - `PineconeStore` — cloud store; auto-creates index (cosine, serverless AWS us-east-1) if absent.
 - `create_vector_store(store_type, dim, config)` in `factory.py` selects the backend at runtime.
 
@@ -147,11 +145,13 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 
 | Variable | Default | Description |
 |---|---|---|
-| `STORE_TYPE` | `pinecone` | `local` (FAISS) or `pinecone` |
-| `LLM_MODEL_NAME` | `llama3.2` | Ollama model name |
-| `LLM_PROVIDER` | `ollama` | LLM provider (`ollama` only currently) |
-| `LLM_TEMPERATURE` | `0.0` | Deterministic output |
-| `LLM_SEED` | `365` | Reproducibility seed |
+| `STORE_TYPE` | `pinecone` | Vector store backend (`pinecone` only currently) |
+| `LLM_MODEL_NAME` | `claude-opus-5-5` | Claude model ID |
+| `LLM_PROVIDER` | `anthropic` | LLM provider (`anthropic` only currently) |
+| `LLM_EFFORT` | `medium` | Thinking depth / token spend: `low`, `medium`, `high`, `xhigh`, `max` |
+| `LLM_MAX_TOKENS` | `16000` | Max output tokens per LLM call |
+| `ANTHROPIC_API` | `true` | `true` → Anthropic API (needs `ANTHROPIC_API_KEY` + credits); `false` → local Claude Code CLI using the account it is logged in with |
+| `ANTHROPIC_API_KEY` | _(required when `ANTHROPIC_API=true`)_ | Anthropic API key from console.anthropic.com |
 | `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
 | `URLS_FILE` | `agentP/urls.txt` | URLs for web scraping |
 | `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
@@ -167,13 +167,13 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `SBR_WEBDRIVER` | _(empty)_ | Selenium WebDriver URL for `scrape_se.py` |
 | `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | _(empty)_ | LangSmith API key |
-| `LANGCHAIN_PROJECT` | `my-property-agent` | LangSmith project name |
+| `LANGCHAIN_PROJECT` | `uk-agents` | LangSmith project name |
 
 ---
 
 ## Development Workflows
 
-All commands are run from the **project root** (`my-property-agent/`).
+All commands are run from the **project root** (`uk-agents/`).
 
 ### Setup
 
@@ -181,9 +181,7 @@ All commands are run from the **project root** (`my-property-agent/`).
 uv venv && uv sync
 # or: pip install -r agentP/requirements.txt
 
-# Edit .env at the project root with real values
-# Ensure Ollama is running:
-ollama pull llama3.2
+# Edit .env at the project root with real values (ANTHROPIC_API_KEY, PINECONE_API_KEY, …)
 ```
 
 ### Running Clients
@@ -290,6 +288,7 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 - **Always run from the project root**: `python -m clients.telegram.main`, not `python clients/telegram/main.py`. The `-m` flag sets `sys.path` to the project root, making `agentP` and `clients` importable.
 - **Relative imports inside `agentP/src/`**: Use `from .model.x import Y` (same package) or `from ..config.config import Config` (parent package). Bare imports like `from config.config import Config` will fail when running from the project root.
 - **`.env` is at the project root**: `config.py` loads it via an absolute path — no need to `cd` anywhere first.
-- **Pinecone vs FAISS**: Set `STORE_TYPE=local` for offline/local development; `pinecone` requires a valid `PINECONE_API_KEY` and network access.
-- **Ollama must be running**: The backend calls the Ollama HTTP API at startup. Run `ollama pull llama3.2` and ensure the daemon is active before starting.
+- **Pinecone required**: `STORE_TYPE=pinecone` needs a valid `PINECONE_API_KEY` and network access.
+- **Two Claude backends** (`ANTHROPIC_API` flag): `true` uses the Anthropic API with `ANTHROPIC_API_KEY` (billed per token); `false` uses `ChatClaudeCode` (`core/src/model/claude_code_chat.py`), which drives the local `claude` CLI via the Claude Agent SDK with its logged-in subscription. In Claude Code mode the agent's bound tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`; built-in Claude Code tools and user settings are disabled.
+- **Read `.text`, not `.content`**: Claude responses include thinking blocks, so `AIMessage.content` is a list. Use `response.text` to get the answer string.
 - **Session persistence**: Chat history is stored in `SESSION_DB_FILE` (SQLite). The file is created automatically on first run at the project root.

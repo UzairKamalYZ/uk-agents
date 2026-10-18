@@ -1,12 +1,9 @@
 # vector_store/factory.py
-from .faiss_store import FAISSStore
 from ..config.config import Config
 
 
 def create_vector_store(store_type: str, dim: int, config: dict):
-    if store_type == "local":
-        return FAISSStore(dim)
-    elif store_type == "pinecone":
+    if store_type == "pinecone":
         from .pinecone_store import PineconeStore  # lazy import — requires optional 'pinecone' package
         return PineconeStore(
             index_name=config.get("index_name", Config.PINECONE_INDEX_NAME),

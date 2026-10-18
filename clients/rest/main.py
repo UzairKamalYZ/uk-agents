@@ -59,7 +59,7 @@ async def ask(prompt: str, stream: bool = False, _: None = Depends(verify_api_ke
 
 
 class RestClient(BaseClient):
-    """Serves the property-agent REST API via uvicorn."""
+    """Serves the uk-agents REST API via uvicorn."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8000):
         self.host = host

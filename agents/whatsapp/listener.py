@@ -73,7 +73,7 @@ class WhatsAppListener:
         )
         response = self._llm.invoke(prompt)
         # LangChain chat models return an AIMessage; plain LLMs return a string
-        text = response.content if hasattr(response, "content") else str(response)
+        text = response.text
         answer = text.strip().upper()
         is_mention = answer.startswith("YES")
         logger.debug(

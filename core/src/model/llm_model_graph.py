@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import re
 import uuid
 from typing import List, TypedDict
 
@@ -152,11 +151,6 @@ class LlmModelGraph:
             tool_calls = response.tool_calls or []
 
             if not tool_calls:
-                json_call = self._parse_json_tool_call(response.content)
-                if json_call:
-                    tool_calls = [json_call]
-
-            if not tool_calls:
                 break
 
             logger.info("Tool iteration %d: detected %d tool call(s)", iterations, len(tool_calls))
@@ -165,7 +159,7 @@ class LlmModelGraph:
 
             for tool_call in tool_calls:
                 name = tool_call["name"]
-                args = tool_call.get("args", tool_call.get("parameters", {})) or {}
+                args = tool_call.get("args") or {}
 
                 logger.info("Calling tool '%s' with args=%s", name, args)
 
@@ -174,7 +168,7 @@ class LlmModelGraph:
                 messages.append(
                     ToolMessage(
                         content=result,
-                        tool_call_id=tool_call.get("id", str(iterations))
+                        tool_call_id=tool_call["id"]
                     )
                 )
 
@@ -187,25 +181,11 @@ class LlmModelGraph:
             logger.warning("Max tool iterations reached, forcing final answer")
 
         return {
-            "answer": response.content if hasattr(response, "content") else str(response)
+            # .text joins the text blocks — Claude responses also carry thinking blocks
+            "answer": response.text
         }
 
     # ------------------- HELPERS -------------------
-
-    @staticmethod
-    def _parse_json_tool_call(text: str) -> dict | None:
-        if not text:
-            return None
-        try:
-            cleaned = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", text, flags=re.DOTALL).strip()
-            data = json.loads(cleaned)
-            if isinstance(data, dict) and "name" in data:
-                args = data.get("parameters") or data.get("arguments") or data.get("args") or {}
-                args = args if isinstance(args, dict) else {}
-                return {"id": "0", "name": data["name"], "args": args}
-        except (json.JSONDecodeError, ValueError):
-            pass
-        return None
 
     @staticmethod
     def _coerce_args(args: dict) -> dict:

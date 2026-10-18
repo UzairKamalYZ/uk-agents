@@ -74,7 +74,7 @@ class SupervisorNode:
             HumanMessage(content="Which agent should run next, or should we FINISH?"),
         ]
         raw = self._llm.invoke(messages)
-        content = raw.content if hasattr(raw, "content") else str(raw)
+        content = raw.text
 
         next_agent = self._parse_next(content)
         logger.info("[supervisor] turns=%d → next=%s", state.get("turns", 0), next_agent)

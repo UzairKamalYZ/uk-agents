@@ -248,9 +248,9 @@ class MultiAgentGraph:
             initial_state, stream_mode="messages"
         ):
             if metadata.get("langgraph_node") == "synthesiser":
-                # AIMessageChunk.content is a string token (may be empty for tool calls)
-                if chunk.content:
-                    yield chunk.content
+                # .text skips thinking / tool-call blocks (empty for those chunks)
+                if chunk.text:
+                    yield chunk.text
 
     def ask(self, user_input: str, session_id: str = "default") -> str:
         """

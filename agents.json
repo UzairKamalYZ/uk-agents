@@ -5,18 +5,14 @@
       "class": "agents.conversational.agent.ConversationalAgent",
       "description": "Handles greetings, small talk, and general questions. Route here for hi, hello, how are you, or any message that is not about property search or finance. Never calls property or finance tools.",
       "enabled": true,
-      "rag": false,
-      "llm_provider": "ollama",
-      "llm_model": "llama3.2"
+      "rag": false
     },
     {
       "name": "property_agent",
       "class": "agents.property.agent.PropertySearchAgent",
       "description": "Searches property listings matching the user's criteria using available listing data. Must be called before finance_agent when listing prices are needed.",
       "enabled": true,
-      "rag": true,
-      "llm_provider": "ollama",
-      "llm_model": "llama3.2"
+      "rag": true
     },
     {
       "name": "finance_agent",
@@ -24,27 +20,21 @@
       "description": "Stock analysis and investment advice only. Uses live Yahoo Finance data. Route here for questions about stocks, tickers, share prices, or investment decisions. Does NOT handle currency conversion or mortgages.",
 
       "enabled": true,
-      "rag": false,
-      "llm_provider": "ollama",
-      "llm_model": "llama3.2"
+      "rag": false
     },
     {
       "name": "whatsapp_agent",
       "class": "agents.whatsapp.agent.WhatsAppAgent",
       "description": "Handles property search questions arriving via WhatsApp. Produces short, mobile-friendly replies without markdown tables or heavy formatting. Route here when the channel is WhatsApp or when a brief, conversational property answer is needed.",
       "enabled": true,
-      "rag": true,
-      "llm_provider": "ollama",
-      "llm_model": "llama3.2"
+      "rag": true
     },
     {
       "name": "mail_agent",
       "class": "agents.mails.agent.MailAgent",
       "description": "Handles questions about emails and inboxes. Route here for requests like 'do I have emails from X', 'summarise my emails', or 'help me draft a reply'. Does not handle property listings or financial topics.",
       "enabled": true,
-      "rag": false,
-      "llm_provider": "ollama",
-      "llm_model": "llama3.2"
+      "rag": false
     }
   ]
 }

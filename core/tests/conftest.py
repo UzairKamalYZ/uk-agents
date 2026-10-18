@@ -1,8 +1,8 @@
 """
 Pytest configuration for core/tests/.
 
-Stubs out heavy third-party packages (pinecone, faiss, sentence_transformers,
-langchain_openai, langchain_community) so that test modules can be collected
+Stubs out heavy third-party packages (pinecone, sentence_transformers,
+langchain_anthropic, langchain_community) so that test modules can be collected
 and imported without them installed.
 """
 
@@ -13,11 +13,9 @@ from unittest.mock import MagicMock
 # ---------------------------------------------------------------------------
 # 0. Minimal environment variables required by Config at class-body import time
 # ---------------------------------------------------------------------------
-os.environ.setdefault("STORE_TYPE", "local")
+os.environ.setdefault("STORE_TYPE", "pinecone")
 os.environ.setdefault("LLM_MODEL_NAME", "test-model")
-os.environ.setdefault("LLM_PROVIDER", "ollama")
-os.environ.setdefault("LLM_SEED", "42")
-os.environ.setdefault("LLM_TEMPERATURE", "0.0")
+os.environ.setdefault("LLM_PROVIDER", "anthropic")
 os.environ.setdefault("SENTENCE_TRANSFORMER_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 os.environ.setdefault("MEMORY_FILE", "memory.json")
 os.environ.setdefault("URLS_FILE", "../urls.txt")
@@ -44,15 +42,12 @@ _pinecone = _stub("pinecone")
 _pinecone.Pinecone = MagicMock
 _pinecone.ServerlessSpec = MagicMock
 
-# faiss — used by persistence/faiss_store.py
-_stub("faiss")
-
 # sentence_transformers — used by model/embedder.py
 _st = _stub("sentence_transformers")
 _st.SentenceTransformer = MagicMock
 
-# langchain_openai — used by model/llm_factory.py
-_stub("langchain_openai")
+# langchain_anthropic — used by model/llm_factory.py
+_stub("langchain_anthropic")
 
 # langchain_community — used by model/session_manager.py
 _lc_comm = _stub("langchain_community")

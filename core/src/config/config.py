@@ -9,11 +9,15 @@ load_dotenv(_PROJECT_ROOT / ".env")
 
 class Config:
     """Configuration class for the application."""
-    STORE_TYPE = os.getenv("STORE_TYPE")
-    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME")
-    LLM_PROVIDER = os.getenv("LLM_PROVIDER")
-    LLM_SEED = int(os.getenv("LLM_SEED"))
-    LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE"))
+    STORE_TYPE = os.getenv("STORE_TYPE", "pinecone")
+    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "claude-opus-5-5")
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
+    # Thinking depth / token spend: low | medium | high | xhigh | max
+    LLM_EFFORT = os.getenv("LLM_EFFORT", "medium")
+    LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "16000"))
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+    # true → Anthropic API (ANTHROPIC_API_KEY); false → local Claude Code CLI and its login
+    ANTHROPIC_API = os.getenv("ANTHROPIC_API", "true").lower() == "true"
     SENTENCE_TRANSFORMER_MODEL = os.getenv("SENTENCE_TRANSFORMER_MODEL")
     MEMORY_FILE = os.getenv("MEMORY_FILE")
     URLS_FILE = os.getenv("URLS_FILE")
@@ -25,11 +29,9 @@ class Config:
     REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    AI_PROVIDER_BASE_URL = os.getenv("AI_PROVIDER_BASE_URL", "http://localhost:11434/v1")
-    AI_PROVIDER_API_KEY = os.getenv("AI_PROVIDER_API_KEY", "ollama")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
-    LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "my-property-agent")
+    LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "uk-agents")
     # API security — leave empty to disable auth
     API_KEY = os.getenv("API_KEY", "")
 

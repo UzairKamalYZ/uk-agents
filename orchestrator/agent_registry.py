@@ -19,8 +19,8 @@ class AgentEntry:
     name: str          # routing token, e.g. "property_agent"
     description: str   # shown to the supervisor LLM so it knows when to route here
     instance: object   # live BaseAgent-compatible object (must have .ask())
-    llm_provider: str  # provider used by this agent (e.g. "ollama")
-    llm_model: str     # model name used by this agent (e.g. "llama3.2")
+    llm_provider: str  # provider used by this agent (e.g. "anthropic")
+    llm_model: str     # model name used by this agent (e.g. "claude-opus-5-5")
 
 
 def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:

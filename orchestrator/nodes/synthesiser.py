@@ -83,7 +83,7 @@ class SynthesiserNode:
             HumanMessage(content=user_input),
         ]
         response = self._llm.invoke(messages)
-        answer = response.content if hasattr(response, "content") else str(response)
+        answer = response.text
 
         logger.info("[synthesiser] final answer len=%d", len(answer))
         updated = dict(agent_outputs)

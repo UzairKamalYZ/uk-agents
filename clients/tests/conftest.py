@@ -8,8 +8,8 @@ Responsibilities:
    LocalAgent`), while leaving agentP.src itself as a real package so that
    agentP/tests can still import the real model and persistence modules.
 2. Stub orchestrator.agent_interface so that importing clients does not
-   trigger the full orchestrator → graph → llm_factory → langchain_openai
-   import chain (langchain_openai is not installed in the test environment).
+   trigger the full orchestrator → graph → llm_factory → langchain_anthropic
+   import chain.
 3. Stub third-party packages that are absent from the minimal test environment:
    uvicorn, fastapi, and telegram.
 """
@@ -35,15 +35,15 @@ def _stub(name: str) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# langchain_openai — not installed in the minimal test environment.
+# langchain_anthropic — keeps the LLM client out of client-layer tests.
 # Must be stubbed before any orchestrator module is imported.
 # ---------------------------------------------------------------------------
-_stub("langchain_openai")
+_stub("langchain_anthropic")
 
 # ---------------------------------------------------------------------------
 # orchestrator.agent_interface — clients import OrchestratorAgent from here.
 # Stubbing the module stops Python following the deep import chain:
-#   agent_interface → graph → llm_factory → langchain_openai → …
+#   agent_interface → graph → llm_factory → langchain_anthropic → …
 # ---------------------------------------------------------------------------
 _orchestrator_interface = _stub("orchestrator.agent_interface")
 _orchestrator_interface.OrchestratorAgent = MagicMock
@@ -51,7 +51,7 @@ _orchestrator_interface.OrchestratorAgent = MagicMock
 # ---------------------------------------------------------------------------
 # agentP.src.agent — clients import LocalAgent from here.
 # Stubbing the *module* (not the package) blocks the whole agent import chain
-# (llm_factory → langchain_ollama, llm_model_graph → langgraph, etc.)
+# (llm_factory → langchain_anthropic, llm_model_graph → langgraph, etc.)
 # without touching the real agentP.src package that agentP/tests rely on.
 # ---------------------------------------------------------------------------
 _agent_mod = _stub("agentP.src.agent")
@@ -66,10 +66,8 @@ _Config.CRON_SEARCH_PROMPT = "find properties"
 # llm_model_graph.py reads these three at module level via os.environ.setdefault;
 # they must be real strings or the call raises TypeError when both test suites run together.
 _Config.LANGCHAIN_TRACING_V2 = "false"
-_Config.LANGCHAIN_PROJECT = "my-property-agent"
+_Config.LANGCHAIN_PROJECT = "uk-agents"
 _Config.LANGCHAIN_API_KEY = ""
-_Config.AI_PROVIDER_API_KEY = "ollama"
-_Config.AI_PROVIDER_BASE_URL = "http://localhost:11434/v1"
 # MCP_FILE must point to the real mcp.json so that mcp_tools.py can load the
 # registry correctly even when core.src.config.config is stubbed.
 _Config.MCP_FILE = str(_PROJECT_ROOT / "mcp.json")

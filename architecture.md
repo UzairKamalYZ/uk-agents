@@ -31,7 +31,7 @@ flowchart TB
         LMG["LlmModelGraph\n(retrieve → generate)"]
         EMB["Embedder\nall-MiniLM-L6-v2\n384-dim"]
         SM["SessionManager\n(SQLite)"]
-        LLM["LLM via Ollama\n(llama3.2)"]
+        LLM["Claude via Anthropic API\n(claude-opus-5-5)"]
     end
 
     %% MCP Tools
@@ -42,7 +42,6 @@ flowchart TB
 
     %% Vector Store
     subgraph VS["Vector Store (persistence/)"]
-        FAISS["FAISSStore\n(local / dev)"]
         PC["PineconeStore\n(cloud / prod)"]
     end
 
@@ -82,7 +81,6 @@ flowchart TB
     LMG --> EMB
 
     %% Core → Vector Store
-    EMB --> FAISS
     EMB --> PC
 
     %% Core → MCP Tools
@@ -115,7 +113,7 @@ flowchart TB
     class CA,PA,FA agent
     class LMG,EMB,SM,LLM core
     class YF,FIN mcp
-    class FAISS,PC storage
+    class PC storage
     class CSV,SCRAPE ingest
     class AGENTSJSON,MCPJSON,LS config
 ```

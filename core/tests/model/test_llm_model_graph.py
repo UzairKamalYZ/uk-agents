@@ -1,15 +1,5 @@
-import sys
-import importlib.machinery
 import unittest
 from unittest.mock import patch, MagicMock
-
-# Python 3.13 + system faiss: __spec__ is None, which causes
-# importlib.util.find_spec("faiss") — called deep inside transformers during
-# langchain_core import — to raise ValueError. A MagicMock is not enough
-# because downstream code reads spec.name expecting a real str; use a proper
-# ModuleSpec instead.
-if "faiss" in sys.modules and getattr(sys.modules["faiss"], "__spec__", None) is None:
-    sys.modules["faiss"].__spec__ = importlib.machinery.ModuleSpec("faiss", None)
 
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
 
@@ -172,6 +162,14 @@ class TestLlmModelGraph(unittest.TestCase):
         self.mock_llm.invoke.return_value = AIMessage(content="Here are listings in Warsaw.")
         result = self.model._generate_node(self._make_state(context="some context"))
         self.assertEqual(result["answer"], "Here are listings in Warsaw.")
+
+    def test_should_return_only_text_blocks_when_response_has_thinking(self):
+        self.mock_llm.invoke.return_value = AIMessage(content=[
+            {"type": "thinking", "thinking": "", "signature": "sig"},
+            {"type": "text", "text": "Two flats match."},
+        ])
+        result = self.model._generate_node(self._make_state(context="some context"))
+        self.assertEqual(result["answer"], "Two flats match.")
 
     def test_should_answer_without_context(self):
         self.mock_llm.invoke.return_value = AIMessage(content="General answer.")

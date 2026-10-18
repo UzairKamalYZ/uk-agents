@@ -1,6 +1,27 @@
-# My Property Agent
+# UK Agents
 
-A conversational multi-agent AI system for property search, stock analysis, email monitoring, and WhatsApp integration. Users describe what they need in natural language and the system routes their request to the right specialist agent — property search (RAG-powered), stock analysis (live data via MCP tools), email queries, WhatsApp-optimised replies, or general conversation. All clients — REST API, Streamlit UI, Telegram bot, and scheduled cron job — share a single `OrchestratorAgent` facade. Two standalone background services (WhatsApp listener and mail monitor) run independently alongside the orchestrator.
+**UK Agents** is Uzair Kamal's (UK) personal repository of AI agents. Each agent does one job for Uzair: finding property, analysing stocks, watching his inboxes, covering for him in WhatsApp groups, or just chatting. New agents are added all the time, and they don't have to be related to each other.
+
+All agents share the same foundation:
+
+- **One base class**: every agent extends `BaseAgent` (`core/`), so the LLM (Claude), session history, optional RAG and MCP tools come for free. A new agent is a prompt plus a few hook methods.
+- **One registry**: agents are listed in `agents.json`. Adding, disabling or re-modelling an agent is a config change.
+- **One front door**: the REST API, Streamlit UI, Telegram bot and cron job all talk to a single `OrchestratorAgent`. Its supervisor reads each request and routes it to the right agent(s) by their `description`.
+- **Background services**: agents that need to run on their own (e.g. the WhatsApp listener and the mail monitor) have standalone entrypoints that run alongside the orchestrator.
+
+### Agent catalog
+
+| Agent | Purpose | Data / tools | Runs as |
+|---|---|---|---|
+| `conversational_agent` | Greetings, small talk, general questions | — | Orchestrator |
+| `property_agent` | Property search over indexed listings | RAG (Pinecone) | Orchestrator |
+| `finance_agent` | Stock analysis and investment questions | Yahoo Finance MCP | Orchestrator |
+| `whatsapp_agent` | Short, mobile-friendly property answers | RAG (Pinecone) | Orchestrator |
+| `mail_agent` | Questions about emails, drafting replies | — | Orchestrator |
+| WhatsApp listener | Detects when Uzair is mentioned in a group and auto-replies | Green API | Standalone (`agents.whatsapp.main`) |
+| Mail monitor | Summarises new emails across inboxes and sends a digest | IMAP + Green API | Standalone (`agents.mails.main`) |
+
+To add your own, see [Adding a New Agent](#adding-a-new-agent).
 
 ---
 
@@ -75,7 +96,7 @@ Every user message enters at the supervisor. The supervisor LLM reads the user's
 ## Package Layout
 
 ```
-my-property-agent/
+uk-agents/
 ├── .env                              # Runtime configuration (project root)
 ├── .env-template                     # Template — copy to .env and fill in keys
 ├── mcp.json                          # MCP server registry
@@ -91,7 +112,8 @@ my-property-agent/
 │       │   └── config.py             # Settings loaded from .env (absolute path)
 │       ├── model/
 │       │   ├── llm_model_graph.py    # LangGraph pipeline (retrieve → generate)
-│       │   ├── llm_factory.py        # LLM provider factory (Ollama / OpenAI-compat)
+│       │   ├── llm_factory.py        # LLM provider factory (Anthropic API or Claude Code)
+│       │   ├── claude_code_chat.py   # ChatClaudeCode — LangChain model over the local Claude Code CLI
 │       │   ├── embedder.py           # SentenceTransformer + vector search
 │       │   ├── rag_context_manager.py# Vector search → formatted context string
 │       │   ├── context_builder.py    # Formats listing dicts as readable text
@@ -100,8 +122,7 @@ my-property-agent/
 │       │   └── mcp_tools.py          # Loads mcp.json → shared _mcp registry
 │       └── persistence/
 │           ├── vector_store.py       # Abstract base (add_vectors / search)
-│           ├── factory.py            # Selects FAISS or Pinecone at runtime
-│           ├── faiss_store.py        # Local CPU-based FAISS store
+│           ├── factory.py            # Selects the vector store backend (Pinecone)
 │           └── pinecone_store.py     # Cloud Pinecone store
 │
 ├── agents/                           # Domain-specific agent implementations
@@ -234,7 +255,7 @@ Merges all agent outputs into one clean answer.
 
 ## Specialist Agents
 
-All agents extend `BaseAgent` (`core/src/base_agent.py`) using the **Template Method** pattern. `BaseAgent.__init__` calls three hook methods that each subclass overrides:
+The agents below are the ones in the repository today; the list is expected to keep growing. All agents extend `BaseAgent` (`core/src/base_agent.py`) using the **Template Method** pattern. `BaseAgent.__init__` calls three hook methods that each subclass overrides:
 
 ```python
 class BaseAgent(ABC):
@@ -286,7 +307,7 @@ supervisor → FINISH → synthesiser (passthrough)
 **Configuration**:
 - RAG: enabled (`RagContextManager` + `Embedder`)
 - MCP tools: default (all registered MCP tools — e.g. currency conversion if available)
-- Vector store: FAISS (local) or Pinecone (cloud), configured via `STORE_TYPE`
+- Vector store: Pinecone (cloud), configured via `STORE_TYPE`
 - System prompt: strict data scope — if no matching listings in context, says so honestly
 
 **Internal pipeline** (`core/src/model/llm_model_graph.py`):
@@ -323,7 +344,7 @@ LLM response
   │                                                    ↑
   │                       (repeat up to MAX_TOOL_CALLS=5 times)
   │
-  └─ no tool_calls → break → return response.content as answer
+  └─ no tool_calls → break → return response.text as answer
 ```
 
 **Data ingestion**:
@@ -511,7 +532,7 @@ Two-node graph: `retrieve → generate`.
 - Builds the message list: system prompt → (context if present) → session history → user message
 - Calls `llm.invoke(messages)` — LLM may request tool calls
 - Loops up to `MAX_TOOL_CALLS = 5`, executing each tool and appending `ToolMessage` results
-- Returns `response.content` as `state["answer"]`
+- Returns `response.text` (text blocks only, no thinking blocks) as `state["answer"]`
 
 **Session history**: kept per `session_id` in memory (dict of lists). Sliding window: last `MAX_HISTORY_TURNS * 2` messages.
 
@@ -533,10 +554,9 @@ Uses `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional float32 vectors).
 
 | Backend | Class | When to use |
 |---|---|---|
-| FAISS | `FAISSStore` | Local development, no cloud dependencies |
 | Pinecone | `PineconeStore` | Production; auto-creates index if absent |
 
-Switch between them with `STORE_TYPE=local` or `STORE_TYPE=pinecone` in `.env`.
+Selected with `STORE_TYPE=pinecone` in `.env`.
 
 ---
 
@@ -645,18 +665,18 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_PROVIDER` | `ollama` | LLM backend (`ollama` is the supported provider) |
-| `LLM_MODEL_NAME` | `llama3.2` | Model name passed to the endpoint |
-| `LLM_TEMPERATURE` | `0.0` | Deterministic output |
-| `LLM_SEED` | `365` | Reproducibility seed |
-| `AI_PROVIDER_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible endpoint |
-| `AI_PROVIDER_API_KEY` | `ollama` | API key for the endpoint |
+| `LLM_PROVIDER` | `anthropic` | LLM backend (`anthropic` is the supported provider) |
+| `LLM_MODEL_NAME` | `claude-opus-5-5` | Claude model ID |
+| `LLM_EFFORT` | `medium` | Thinking depth / token spend: `low`, `medium`, `high`, `xhigh`, `max` |
+| `LLM_MAX_TOKENS` | `16000` | Max output tokens per LLM call |
+| `ANTHROPIC_API` | `true` | `true` → Anthropic API (needs `ANTHROPIC_API_KEY` + credits); `false` → local Claude Code CLI using the account it is logged in with |
+| `ANTHROPIC_API_KEY` | _(required when `ANTHROPIC_API=true`)_ | Anthropic API key from console.anthropic.com |
 
 ### Vector store
 
 | Variable | Default | Description |
 |---|---|---|
-| `STORE_TYPE` | `pinecone` | `local` (FAISS) or `pinecone` |
+| `STORE_TYPE` | `pinecone` | Vector store backend (`pinecone` only) |
 | `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
 | `RAG_K` | `5` | Listings returned per vector search |
 | `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
@@ -724,7 +744,7 @@ Example `MAIL_ACCOUNTS` value:
 |---|---|---|
 | `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | _(empty)_ | LangSmith API key |
-| `LANGCHAIN_PROJECT` | `my-property-agent` | LangSmith project name |
+| `LANGCHAIN_PROJECT` | `uk-agents` | LangSmith project name |
 
 ---
 
@@ -733,29 +753,23 @@ Example `MAIL_ACCOUNTS` value:
 ### Prerequisites
 
 - Python 3.13+
-- [Ollama](https://ollama.ai/) installed and running
+- Either Claude Code installed and logged in (`ANTHROPIC_API=false`, uses your Claude subscription — personal use only), or an [Anthropic API key](https://console.anthropic.com) with credits (`ANTHROPIC_API=true`)
 - Node.js + `npx` (for MCP servers)
-- Pinecone account, or set `STORE_TYPE=local` for offline FAISS
+- Pinecone account
 
 ### Installation
 
 ```bash
-git clone https://github.com/your-username/my-property-agent.git
-cd my-property-agent
+git clone https://github.com/UzairKamalYZ/uk-agents.git
+cd uk-agents
 uv venv && uv sync
-```
-
-Pull the model:
-
-```bash
-ollama pull llama3.2
 ```
 
 Configure the environment:
 
 ```bash
-cp .env.template .env
-# Edit .env with your Pinecone key, Telegram token, etc.
+cp .env-template .env
+# Edit .env with your Anthropic key, Pinecone key, Telegram token, etc.
 ```
 
 ---
@@ -876,13 +890,17 @@ class MyAgent(BaseAgent):
   "class": "agents.myagent.agent.MyAgent",
   "description": "Handles questions about X. Route here when the user asks about X.",
   "enabled": true,
-  "rag": false,
-  "llm_provider": "ollama",
-  "llm_model": "llama3.2"
+  "rag": false
 }
 ```
 
+Every agent uses `LLM_PROVIDER` / `LLM_MODEL_NAME` from `.env`. To give one agent a different model, add `"llm_model": "claude-haiku-5-5"` (and optionally `"llm_provider"`) to its entry.
+
 The supervisor will automatically route to your agent based on its description. No changes to `core/`, `orchestrator/`, or any client are needed.
+
+An agent doesn't have to sit behind the orchestrator. If it needs to run on its own (polling, schedules, webhooks), give it a `main.py` entrypoint like `agents/whatsapp/main.py` or `agents/mails/main.py`, reuse `create_llm()` from `core/`, and run it with `python -m agents.<name>.main`.
+
+Add a row for it to the [Agent catalog](#agent-catalog).
 
 ---
 
@@ -911,7 +929,7 @@ Set in `.env`:
 ```env
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=<your-key>
-LANGCHAIN_PROJECT=my-property-agent
+LANGCHAIN_PROJECT=uk-agents
 ```
 
 **Trace hierarchy** for a typical property search:

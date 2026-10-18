@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 
 class BaseClient(ABC):
     """
-    Common interface for all property-agent clients.
+    Common interface for all uk-agents clients.
 
     Every client (REST, cron, Telegram, Streamlit) must implement:
       - start() — blocks until the client stops (serve, poll, loop, ...)

@@ -114,7 +114,7 @@ class MailMonitor:
             body=msg["body"],
         )
         resp = self._llm.invoke(prompt)
-        text = resp.content if hasattr(resp, "content") else str(resp)
+        text = resp.text
         return text.strip()
 
     # ------------------------------------------------------------------
