@@ -2,6 +2,6 @@
   "servers": [
     {"name": "finance",       "command": ["npx", "--yes", "@easysolutions906/mcp-finance"]},
     {"name": "stocks", "command": ["npx", "--yes", "@fre4x/yahoo-finance"]},
-    {"name": "expenses", "command": ["{python}", "-m", "agents.expenditure.mcp_server"]}
+    {"name": "expenses", "command": ["{python}", "-m", "agents.expenditure.mcp_server"], "owner_only": true}
   ]
 }

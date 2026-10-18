@@ -62,6 +62,16 @@ def _sanitize_field_name(name: str) -> str:
     return name
 
 
+def _schema_type(schema: dict) -> str:
+    """JSON-Schema type name; for an optional ``anyOf: [X, null]`` the non-null X."""
+    if "type" in schema:
+        return schema["type"]
+    for option in schema.get("anyOf", []):
+        if option.get("type") not in (None, "null"):
+            return option["type"]
+    return "string"
+
+
 def _build_args_model(tool_name: str, input_schema: dict) -> type[BaseModel]:
     """
     Construct a Pydantic model from an MCP JSON-Schema inputSchema dict.
@@ -76,7 +86,7 @@ def _build_args_model(tool_name: str, input_schema: dict) -> type[BaseModel]:
 
     for orig_name, schema in properties.items():
         safe_name = _sanitize_field_name(orig_name)
-        py_type = _JSON_SCHEMA_TO_PYTHON.get(schema.get("type", "string"), str)
+        py_type = _JSON_SCHEMA_TO_PYTHON.get(_schema_type(schema), str)
         description = schema.get("description", orig_name)
 
         if orig_name in required:
@@ -110,11 +120,13 @@ class MCPProcess:
     ----------
     name    : Human-readable label used in log messages.
     command : Subprocess command list, e.g. ``["npx", "--yes", "@acme/mcp"]``.
+    cwd     : Working directory for the subprocess (None → inherit the parent's).
     """
 
-    def __init__(self, name: str, command: list[str]):
+    def __init__(self, name: str, command: list[str], cwd: str | None = None):
         self.name = name
         self._command = command
+        self._cwd = cwd
         self._process: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._req_id = 1
@@ -133,6 +145,7 @@ class MCPProcess:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            cwd=self._cwd,
             text=True,
             bufsize=1,
         )
@@ -328,14 +341,23 @@ class MCPRegistry:
 
     def __init__(self) -> None:
         self._servers: dict[str, MCPProcess] = {}
+        # Servers excluded from the default (server_name=None) tool set, e.g. ledger writers.
+        self._owner_only: set[str] = set()
 
     # ------------------------------------------------------------------ #
     # Registration                                                         #
     # ------------------------------------------------------------------ #
 
-    def register(self, name: str, command: list[str]) -> "MCPRegistry":
+    def register(
+        self,
+        name: str,
+        command: list[str],
+        cwd: str | None = None,
+        owner_only: bool = False,
+    ) -> "MCPRegistry":
         """Register a stdio subprocess MCP server."""
-        self._servers[name] = MCPProcess(name, command)
+        self._servers[name] = MCPProcess(name, command, cwd=cwd)
+        self._set_owner_only(name, owner_only)
         logger.info("mcp-registry: registered stdio server '%s'", name)
         return self
 
@@ -345,11 +367,22 @@ class MCPRegistry:
         url: str,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        owner_only: bool = False,
     ) -> "MCPRegistry":
         """Register an HTTP-based MCP server."""
         self._servers[name] = MCPHttpProcess(name, url, params=params, headers=headers)
+        self._set_owner_only(name, owner_only)
         logger.info("mcp-registry: registered HTTP server '%s' → %s", name, url)
         return self
+
+    def is_owner_only(self, name: str) -> bool:
+        return name in self._owner_only
+
+    def _set_owner_only(self, name: str, owner_only: bool) -> None:
+        if owner_only:
+            self._owner_only.add(name)
+        else:
+            self._owner_only.discard(name)
 
     # ------------------------------------------------------------------ #
     # Tool dispatch                                                        #
@@ -380,11 +413,12 @@ class MCPRegistry:
         Parameters
         ----------
         server_name : if given, only return tools from that server;
-                      if None (default), return tools from all servers.
+                      if None (default), return tools from all servers except
+                      owner-only ones (those must be requested by name).
                       An unregistered name yields no tools (never all servers).
         """
         if server_name is None:
-            servers = self._servers
+            servers = {n: s for n, s in self._servers.items() if n not in self._owner_only}
         elif server_name in self._servers:
             servers = {server_name: self._servers[server_name]}
         else:
