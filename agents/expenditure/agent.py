@@ -8,12 +8,12 @@ from core.src.model.mcp_tools import _mcp
 from core.src.utils import load_prompt
 
 from .ledger import ExpenseLedger
-from .replies import format_amount, format_logged, format_need_amount
+from .replies import format_amount, format_logged, format_need_amount, format_nothing, sign
 
 logger = logging.getLogger(__name__)
 
 _PROMPT_FILE = Path(__file__).parent / "prompts" / "System_Prompt.txt"
-UNAVAILABLE_REPLY = "Expense tracking is unavailable right now — nothing was saved."
+UNAVAILABLE_REPLY = sign("⚠️ Expense tracking is unavailable right now — nothing was saved.")
 
 
 class ExpenditureAgent(BaseAgent):
@@ -41,6 +41,7 @@ class ExpenditureAgent(BaseAgent):
         return date.today()
 
     def ask(self, prompt: str, stream: bool = False, session_id: str = None):
+        self._log_input(prompt)
         if not self._tools_available:
             return iter([UNAVAILABLE_REPLY]) if stream else UNAVAILABLE_REPLY
         today = self._today()
@@ -57,13 +58,22 @@ class ExpenditureAgent(BaseAgent):
         return f"{e.place}, {format_amount(e.amount)}, {e.date.isoformat()} (problem: {problem})"
 
     def confirm_pending(self, session_id: str) -> str:
+        self._log_input("[confirmed pending expense]")
         pending = self._ledger.get_pending()
         if pending is not None and pending[0].amount is None:
             return format_need_amount(pending[0])
         e = self._ledger.confirm_pending()
         if e is None:
-            return "Nothing to confirm."
+            return format_nothing("confirm")
         return format_logged(e, *self._ledger.totals(self._today()))
 
     def discard_pending(self, session_id: str) -> None:
+        self._log_input("[discarded pending expense]")
         self._ledger.clear_pending()
+
+    def _log_input(self, text: str) -> None:
+        # The input log is a record, not a gate — a write failure must not block the reply.
+        try:
+            self._ledger.log_input(text)
+        except OSError:
+            logger.exception("ExpenditureAgent: could not write the input log")

@@ -48,7 +48,7 @@ def _agents(pending=None):
     exp = MagicMock()
     exp.ask.return_value = "Pending: 2026-10-18 | Colruyt | 80.00 — confirm?"
     exp.pending_summary.return_value = pending
-    exp.confirm_pending.return_value = f"Saved {SUMMARY}\nprev_month: €0, current_month: €90"
+    exp.confirm_pending.return_value = f"Saved {SUMMARY}\nLast month: €0.00\nThis month: €90.00"
     return [
         AgentEntry("conversational_agent", "chat", conv, "anthropic", "m"),
         AgentEntry("expenditure_tracker", "spend", exp, "anthropic", "m", owner_only=True),

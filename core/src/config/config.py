@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -6,6 +7,18 @@ _PROJECT_ROOT = Path(__file__).parents[3]
 
 # Always load from the project root .env, regardless of where the process is launched
 load_dotenv(_PROJECT_ROOT / ".env")
+
+
+def _user_data_dir() -> Path:
+    """Per-user data directory for uk-agents, outside the project (survives re-clones)."""
+    if os.name == "nt":
+        base = Path(os.getenv("APPDATA", Path.home() / "AppData" / "Roaming"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "uk-agents"
+
 
 class Config:
     """Configuration class for the application."""
@@ -50,7 +63,9 @@ class Config:
     NORMALISER_PROMPT_FILE = os.getenv("NORMALISER_PROMPT_FILE", "orchestrator/prompts/normaliser.txt")
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
-    EXPENSES_DIR = str(_PROJECT_ROOT / os.getenv("EXPENSES_DIR", "expenses"))
+    # Expense ledger + input log — kept outside the project in the user data dir;
+    # a relative EXPENSES_DIR is resolved from the project root, "~" is expanded
+    EXPENSES_DIR = str(_PROJECT_ROOT / Path(os.getenv("EXPENSES_DIR") or _user_data_dir() / "expenses").expanduser())
     # Local faster-whisper model size for voice transcription
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))

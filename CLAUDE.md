@@ -163,7 +163,7 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from @BotFather |
 | `TELEGRAM_OWNER_ID` | _(empty)_ | Telegram user id of the owner; only needed for agents marked `"owner_only": true` in `agents.json` (none by default) |
 | `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
-| `EXPENSES_DIR` | `expenses` | Directory (from project root) for monthly expense files |
+| `EXPENSES_DIR` | _(per-user data dir)_ | Expense ledger directory: monthly files, `inputs.log` (every message the expense agent received), history and pending item. Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
 | `NORMALISER_PROMPT_FILE` | `orchestrator/prompts/normaliser.txt` | Orchestrator normaliser prompt path |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled cron job |

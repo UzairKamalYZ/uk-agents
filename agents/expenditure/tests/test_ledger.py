@@ -1,12 +1,12 @@
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 
 from agents.expenditure.ledger import Expense, ExpenseLedger
-from agents.expenditure.replies import format_question, format_totals
+from agents.expenditure.replies import format_breakdown, format_logged, format_question, format_totals
 
 
 def test_add_writes_month_file_line(tmp_path):
@@ -75,19 +75,54 @@ def test_pending_roundtrip_and_confirm(tmp_path):
 
 
 def test_replies_format():
-    assert format_totals(Decimal("1000"), Decimal("12.5")) == "prev_month: €1000, current_month: €12.50"
+    assert format_totals(Decimal("1000"), Decimal("12.5")) == (
+        "📊 Totals\nLast month: €1,000.00\nThis month: €12.50\n\n— Expenditure Tracker"
+    )
     e = Expense(date(2026, 10, 18), "Colruyt", Decimal("19.00"))
     assert format_question(e, "amount unclear") == (
-        "I understood: Colruyt, €19, 2026-10-18 (problem: amount unclear). "
-        "Reply yes to save, no to discard, or send the corrected version."
+        "⚠️ Please check this expense\n📍 Colruyt\n💶 €19.00\n📅 Sun 18 Oct 2026\n❓ amount unclear\n\n"
+        "Reply yes to save, no to discard, or send the corrected version.\n\n— Expenditure Tracker"
+    )
+
+
+def test_logged_reply_format():
+    e = Expense(date(2026, 10, 18), "Colruyt", Decimal("90"))
+    assert format_logged(e, Decimal("1000"), Decimal("120")) == (
+        "✅ Expense saved\n📍 Colruyt\n💶 €90.00\n📅 Sun 18 Oct 2026\n\n"
+        "📊 Totals\nLast month: €1,000.00\nThis month: €120.00\n\n— Expenditure Tracker"
     )
 
 
 def test_question_with_unknown_amount():
     e = Expense(date(2026, 10, 18), "Colruyt", None)
-    assert format_question(e, "amount missing") == (
-        "I understood: Colruyt, amount unknown, 2026-10-18 (problem: amount missing). "
-        "Reply yes to save, no to discard, or send the corrected version."
+    assert "💶 amount unknown\n" in format_question(e, "amount missing")
+
+
+def test_breakdown_reply_format():
+    rows = [("Colruyt", Decimal("150")), ("Albert Heijn", Decimal("50"))]
+    assert format_breakdown(date(2026, 10, 1), rows) == (
+        "🧾 Spending by place — October 2026\n• Colruyt: €150.00\n• Albert Heijn: €50.00\n\n"
+        "Total: €200.00\n\n— Expenditure Tracker"
+    )
+    assert "No expenses logged." in format_breakdown(date(2026, 10, 1), [])
+
+
+def test_breakdown_groups_places_case_insensitively_largest_first(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    ledger.add(date(2026, 10, 1), "Albert Heijn", 50)
+    ledger.add(date(2026, 10, 2), "Colruyt", 90)
+    ledger.add(date(2026, 10, 3), "colruyt", 60)
+    ledger.add(date(2026, 9, 30), "Colruyt", 999)
+    assert ledger.breakdown(2026, 10) == [("Colruyt", Decimal("150.00")), ("Albert Heijn", Decimal("50.00"))]
+    assert ledger.breakdown(2026, 11) == []
+
+
+def test_log_input_appends_one_line_per_message(tmp_path):
+    ledger = ExpenseLedger(tmp_path / "new")
+    ledger.log_input("Colruyt 90\neuros", datetime(2026, 10, 18, 9, 5, 1))
+    ledger.log_input("undo last", datetime(2026, 10, 18, 9, 6, 0))
+    assert (tmp_path / "new" / "inputs.log").read_text() == (
+        "2026-10-18 09:05:01 | Colruyt 90 euros\n2026-10-18 09:06:00 | undo last\n"
     )
 
 

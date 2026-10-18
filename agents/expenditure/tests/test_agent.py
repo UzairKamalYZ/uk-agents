@@ -29,18 +29,18 @@ def _pending(tmp_path, amount="19"):
 def test_confirm_pending_logs_and_returns_totals(agent, tmp_path):
     _pending(tmp_path)
     reply = agent.confirm_pending("s")
-    assert reply.startswith("Logged €19 at Colruyt")
+    assert reply.startswith("✅ Expense saved\n📍 Colruyt\n💶 €19.00")
     assert "2026-10-18 | Colruyt | 19.00" in (tmp_path / "2026-10.txt").read_text()
 
 
 def test_confirm_without_pending(agent):
-    assert agent.confirm_pending("s") == "Nothing to confirm."
+    assert agent.confirm_pending("s") == "ℹ️ Nothing to confirm.\n\n— Expenditure Tracker"
 
 
 def test_pending_summary_and_discard(agent, tmp_path):
     assert agent.pending_summary("s") is None
     _pending(tmp_path)
-    assert agent.pending_summary("s") == "Colruyt, €19, 2026-10-18 (problem: amount unclear)"
+    assert agent.pending_summary("s") == "Colruyt, €19.00, 2026-10-18 (problem: amount unclear)"
     agent.discard_pending("s")
     assert agent.pending_summary("s") is None
 
@@ -58,9 +58,7 @@ def test_pending_summary_with_unknown_amount(agent, tmp_path):
 
 def test_confirm_with_unknown_amount_keeps_pending_and_saves_nothing(agent, tmp_path):
     _pending(tmp_path, amount=None)
-    assert agent.confirm_pending("s") == (
-        "I still need the amount for Colruyt (2026-10-18). Send the corrected version, or no to discard."
-    )
+    assert agent.confirm_pending("s").startswith("⚠️ I still need the amount\n📍 Colruyt\n📅 Sun 18 Oct 2026")
     assert not (tmp_path / "2026-10.txt").exists()
     assert agent.pending_summary("s") is not None
 
@@ -69,6 +67,23 @@ def test_ask_prefixes_today(agent):
     agent.model.ask.return_value = "ok"
     assert agent.ask("Colruyt 90", session_id="x") == "ok"
     agent.model.ask.assert_called_once_with("Today is 2026-10-18 (Sunday).\n\nColruyt 90", session_id="x")
+
+
+def test_every_input_is_logged(agent, tmp_path):
+    agent.model.ask.return_value = "ok"
+    agent.ask("Colruyt 90", session_id="x")
+    _pending(tmp_path)
+    agent.confirm_pending("s")
+    _pending(tmp_path)
+    agent.discard_pending("s")
+    entries = [line.split(" | ", 1)[1] for line in (tmp_path / "inputs.log").read_text().splitlines()]
+    assert entries == ["Colruyt 90", "[confirmed pending expense]", "[discarded pending expense]"]
+
+
+def test_input_log_failure_does_not_block_reply(agent):
+    agent.model.ask.return_value = "ok"
+    with patch.object(agent._ledger, "log_input", side_effect=OSError("disk full")):
+        assert agent.ask("Colruyt 90") == "ok"
 
 
 def test_ask_without_tools_refuses_without_calling_model(tmp_path, caplog):
@@ -81,5 +96,6 @@ def test_ask_without_tools_refuses_without_calling_model(tmp_path, caplog):
         with caplog.at_level("ERROR"):
             a = ExpenditureAgent(session_id="s")
     assert "expenses" in caplog.text
-    assert a.ask("Colruyt 90") == "Expense tracking is unavailable right now — nothing was saved."
+    assert a.ask("Colruyt 90").startswith("⚠️ Expense tracking is unavailable right now — nothing was saved.")
     a.model.ask.assert_not_called()
+    assert "Colruyt 90" in (tmp_path / "inputs.log").read_text()

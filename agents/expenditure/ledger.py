@@ -3,7 +3,7 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
@@ -33,7 +33,7 @@ class Expense:
 
 
 class ExpenseLedger:
-    """Plain-text monthly expense files plus a history stack and a pending slot."""
+    """Plain-text monthly expense files, an input log, a history stack and a pending slot."""
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
@@ -47,6 +47,13 @@ class ExpenseLedger:
         history.append(expense.to_dict())
         self._write_json(self._history_path, history)
         return expense
+
+    def log_input(self, text: str, when: datetime | None = None) -> None:
+        """Append one received message to inputs.log, whatever happens to it afterwards."""
+        when = when or datetime.now()
+        self._root.mkdir(parents=True, exist_ok=True)
+        with self._inputs_path.open("a", encoding="utf-8") as f:
+            f.write(f"{when.isoformat(sep=' ', timespec='seconds')} | {' '.join(text.split())}\n")
 
     def undo_last(self) -> Expense | None:
         history = self._read_list(self._history_path)
@@ -68,6 +75,14 @@ class ExpenseLedger:
     def totals(self, today: date) -> tuple[Decimal, Decimal]:
         prev_year, prev_month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
         return self._month_total(prev_year, prev_month), self._month_total(today.year, today.month)
+
+    def breakdown(self, year: int, month: int) -> list[tuple[str, Decimal]]:
+        """Per-place totals for one month, largest first. Places match case-insensitively."""
+        totals: dict[str, tuple[str, Decimal]] = {}
+        for place, amount in self._month_entries(year, month):
+            name, total = totals.get(place.casefold(), (place, Decimal("0")))
+            totals[place.casefold()] = (name, total + amount)
+        return sorted(totals.values(), key=lambda t: (-t[1], t[0].casefold()))
 
     def set_pending(self, expense: Expense, problem: str) -> None:
         self._write_json(self._pending_path, {"expense": expense.to_dict(), "problem": problem})
@@ -99,21 +114,29 @@ class ExpenseLedger:
         return self._root / "history.json"
 
     @property
+    def _inputs_path(self) -> Path:
+        return self._root / "inputs.log"
+
+    @property
     def _pending_path(self) -> Path:
         return self._root / "pending.json"
 
     def _month_file(self, d: date) -> Path:
         return self._root / f"{d.year:04d}-{d.month:02d}.txt"
 
-    def _month_total(self, year: int, month: int) -> Decimal:
+    def _month_entries(self, year: int, month: int) -> list[tuple[str, Decimal]]:
         path = self._month_file(date(year, month, 1))
-        total = Decimal("0")
-        if path.exists():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                parts = line.split(" | ")
-                if len(parts) == 3:
-                    total += Decimal(parts[2])
-        return total
+        if not path.exists():
+            return []
+        entries = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parts = line.split(" | ")
+            if len(parts) == 3:
+                entries.append((parts[1], Decimal(parts[2])))
+        return entries
+
+    def _month_total(self, year: int, month: int) -> Decimal:
+        return sum((amount for _, amount in self._month_entries(year, month)), Decimal("0"))
 
     @staticmethod
     def _clean_place(place: str) -> str:

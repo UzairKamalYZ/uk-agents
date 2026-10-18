@@ -9,7 +9,14 @@ from mcp.server.mcpserver import MCPServer
 from core.src.config.config import Config
 
 from .ledger import Expense, ExpenseLedger
-from .replies import format_logged, format_question, format_totals, format_undone
+from .replies import (
+    format_breakdown,
+    format_logged,
+    format_nothing,
+    format_question,
+    format_totals,
+    format_undone,
+)
 
 server = MCPServer("expenses")
 
@@ -93,7 +100,7 @@ def undo_last_expense(*, ledger: ExpenseLedger | None = None) -> str:
     led = _ledger(ledger)
     expense = led.undo_last()
     if expense is None:
-        return "Nothing to undo."
+        return format_nothing("undo")
     prev, cur = led.totals(_today())
     return format_undone(expense, prev, cur)
 
@@ -102,6 +109,21 @@ def get_expense_totals(*, ledger: ExpenseLedger | None = None) -> str:
     """Return previous-month and current-month expense totals."""
     prev, cur = _ledger(ledger).totals(_today())
     return format_totals(prev, cur)
+
+
+def get_expense_breakdown(month: str | None = None, *, ledger: ExpenseLedger | None = None) -> str:
+    """Return spending per place (shop, merchant) for one month, largest first.
+
+    month is YYYY-MM; omit it (or pass empty) for the current month.
+    """
+    if month is None or not str(month).strip():
+        first = _today().replace(day=1)
+    else:
+        try:
+            first = date.fromisoformat(f"{str(month).strip()}-01")
+        except ValueError:
+            return f"Invalid month '{month}', expected YYYY-MM."
+    return format_breakdown(first, _ledger(ledger).breakdown(first.year, first.month))
 
 
 # Thin wrappers keep the `ledger` kwarg out of the tool schemas.
@@ -123,6 +145,11 @@ def _undo_last_expense() -> str:
 @server.tool(name="get_expense_totals", description=get_expense_totals.__doc__)
 def _get_expense_totals() -> str:
     return get_expense_totals()
+
+
+@server.tool(name="get_expense_breakdown", description=get_expense_breakdown.__doc__)
+def _get_expense_breakdown(month: str | None = None) -> str:
+    return get_expense_breakdown(month)
 
 
 if __name__ == "__main__":
