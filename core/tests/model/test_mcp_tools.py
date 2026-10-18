@@ -230,3 +230,12 @@ def test_python_placeholder_resolves_to_sys_executable():
         cfg.write_text(json.dumps({"servers": [{"name": "x", "command": ["{python}", "-m", "x"]}]}))
         registry = _load_registry(cfg)
     assert registry._servers["x"]._command == [sys.executable, "-m", "x"]
+
+
+def test_langchain_tools_unknown_server_returns_empty():
+    registry = MCPRegistry()
+    server = MagicMock()
+    server.list_tools.return_value = [{"name": "t"}]
+    registry._servers["a"] = server
+    assert registry.langchain_tools(server_name="missing") == []
+    server.list_tools.assert_not_called()

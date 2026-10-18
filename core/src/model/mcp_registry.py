@@ -381,12 +381,15 @@ class MCPRegistry:
         ----------
         server_name : if given, only return tools from that server;
                       if None (default), return tools from all servers.
+                      An unregistered name yields no tools (never all servers).
         """
-        servers = (
-            {server_name: self._servers[server_name]}
-            if server_name and server_name in self._servers
-            else self._servers
-        )
+        if server_name is None:
+            servers = self._servers
+        elif server_name in self._servers:
+            servers = {server_name: self._servers[server_name]}
+        else:
+            logger.warning("mcp-registry: server '%s' is not registered — returning no tools", server_name)
+            return []
 
         tools: list[StructuredTool] = []
         for server in servers.values():
