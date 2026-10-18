@@ -284,6 +284,8 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 | CLI interaction messages | `agentP/src/prompts/interaction.json` |
 | URLs for web scraping | `agentP/urls.txt` |
 | Runtime log | `logs/agent.log` |
+| Agent registry (orchestrator) | `agents.json` — `"owner_only": true` means only the bot owner (`TELEGRAM_OWNER_ID`) may use the agent; others are refused and its pending items are ignored |
+| MCP server registry | `mcp.json` — `"{python}"` in a command = current interpreter, launched from the project root; `"owner_only": true` keeps the server out of the default tool set (`langchain_tools()` with no `server_name`), so only an agent that asks for it by name gets its tools |
 
 ---
 
