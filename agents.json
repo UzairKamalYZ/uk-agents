@@ -18,7 +18,6 @@
       "name": "finance_agent",
       "class": "agents.finance.agent.FinanceAgent",
       "description": "Stock analysis and investment advice only. Uses live Yahoo Finance data. Route here for questions about stocks, tickers, share prices, or investment decisions. Does NOT handle currency conversion or mortgages.",
-
       "enabled": true,
       "rag": false
     },
@@ -35,6 +34,14 @@
       "description": "Handles questions about emails and inboxes. Route here for requests like 'do I have emails from X', 'summarise my emails', or 'help me draft a reply'. Does not handle property listings or financial topics.",
       "enabled": true,
       "rag": false
+    },
+    {
+      "name": "expenditure_tracker",
+      "class": "agents.expenditure.agent.ExpenditureAgent",
+      "description": "Logs the owner's personal spending (e.g. 'Colruyt 90 euros today'), undoes the last logged expense, and answers how much was spent this or last month. Route here for any message about money spent, purchases, expenses or spending totals. Does not handle stocks, investments or property.",
+      "enabled": true,
+      "rag": false,
+      "owner_only": true
     }
   ]
 }

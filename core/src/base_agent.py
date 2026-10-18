@@ -82,6 +82,17 @@ class BaseAgent(ABC):
             return self.model.ask_stream(prompt, session_id=sid)
         return self.model.ask(prompt, session_id=sid)
 
+    # Pending-confirmation hooks — no-ops unless an agent keeps pending state.
+
+    def pending_summary(self, session_id: str) -> str | None:
+        return None
+
+    def confirm_pending(self, session_id: str) -> str:
+        return ""
+
+    def discard_pending(self, session_id: str) -> None:
+        return None
+
     def close(self) -> None:
         self.model.close()
 

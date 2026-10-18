@@ -151,3 +151,13 @@ class TestBaseAgent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPendingHooksDefault(unittest.TestCase):
+
+    def test_pending_hooks_default_noop(self):
+        with patch("core.src.base_agent.create_llm"), patch("core.src.base_agent.LlmModelGraph"):
+            agent = _MinimalAgent(session_id="s")
+        self.assertIsNone(agent.pending_summary("s"))
+        self.assertEqual(agent.confirm_pending("s"), "")
+        self.assertIsNone(agent.discard_pending("s"))
