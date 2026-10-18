@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -31,3 +35,24 @@ def test_model_loaded_once_with_cpu_int8():
         t.transcribe("a.ogg")
         t.transcribe("b.ogg")
     cls.assert_called_once_with("small", device="cpu", compute_type="int8")
+
+
+def test_explicit_model_size_overrides_config():
+    model = MagicMock()
+    model.transcribe.return_value = (iter([]), MagicMock())
+    with patch("core.src.speech.transcriber.WhisperModel", return_value=model) as cls, \
+         patch("core.src.speech.transcriber.Config") as cfg:
+        cfg.WHISPER_MODEL = "small"
+        Transcriber("tiny").transcribe("a.ogg")
+    cls.assert_called_once_with("tiny", device="cpu", compute_type="int8")
+
+
+def test_config_default_whisper_model_is_small():
+    # Subprocess: other tests stub Config process-wide, so check the real default in isolation.
+    env = {k: v for k, v in os.environ.items() if k != "WHISPER_MODEL"}
+    root = Path(__file__).parents[3]
+    out = subprocess.run(
+        [sys.executable, "-c", "from core.src.config.config import Config; print(Config.WHISPER_MODEL)"],
+        cwd=root, env=env, capture_output=True, text=True, check=True,
+    )
+    assert out.stdout.strip() == "small"

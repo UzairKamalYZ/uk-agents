@@ -9,7 +9,7 @@ class Transcriber:
     """Local speech-to-text via faster-whisper. Audio never leaves the machine."""
 
     def __init__(self, model_size: str | None = None) -> None:
-        # Resolved at call time so Config overrides apply
+        # Resolved at construction time (not import time) so Config overrides apply
         self._model_size = model_size or Config.WHISPER_MODEL
         self._model: WhisperModel | None = None
 
