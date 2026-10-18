@@ -47,6 +47,7 @@ class Config:
     SYNTHESISER_PROMPT_FILE = os.getenv("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
+    EXPENSES_DIR = str(_PROJECT_ROOT / os.getenv("EXPENSES_DIR", "expenses"))
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))
 
     # ---------------------------------------------------------------------------

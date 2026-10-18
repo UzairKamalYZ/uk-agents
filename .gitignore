@@ -25,3 +25,5 @@ package-lock.json
 .idea/
 /package-lock.json
 node_modules/
+# Expense ledger data
+expenses/
