@@ -17,12 +17,16 @@ The LLM replies with JSON: {"text": "...", "pending": "confirm" | "cancel" |
 
 Outcomes
 --------
-    parse failure / LLM error → raw text, pending untouched     → supervisor
-    no pending                → cleaned text                    → supervisor
-    confirm                   → agent.confirm_pending() output  → synthesiser
-    cancel                    → agent.discard_pending()         → synthesiser
-    correction                → cleaned text + summary, direct  → that agent
-    unrelated / null          → agent.discard_pending()         → supervisor
+    no pending, parse failure / LLM error → raw text                       → supervisor
+    no pending                            → cleaned text                   → supervisor
+    pending, parse failure / LLM error /
+      unknown verdict                     → re-ask, pending untouched      → synthesiser
+    confirm                               → agent.confirm_pending() output → synthesiser
+    cancel                                → agent.discard_pending()        → synthesiser
+    correction                            → cleaned text + summary, direct → that agent
+    unrelated / null                      → agent.discard_pending()        → supervisor
+
+Verdicts are matched case-insensitively after stripping whitespace.
 
 Usage
 -----
@@ -45,6 +49,11 @@ from ._json import parse_json_object
 logger = logging.getLogger(__name__)
 
 DISCARDED_REPLY = "Discarded."
+REASK_REPLY = (
+    "Sorry, I didn't catch that. Pending: {summary}. "
+    "Reply yes to save, no to discard, or send the corrected version."
+)
+_VERDICTS = {"confirm", "cancel", "correction", "unrelated"}
 
 
 class NormaliserNode:
@@ -83,14 +92,17 @@ class NormaliserNode:
         pending_agent, summary = self._find_pending(session_id, state.get("is_owner", False))
 
         reply = self._classify(raw, summary)
-        if reply is None:
-            return {"user_input": raw}
-
-        text, verdict = reply
         if pending_agent is None:
-            return {"user_input": text}
+            return {"user_input": reply[0] if reply is not None else raw}
 
         name, agent = pending_agent.name, pending_agent.instance
+        verdict = reply[1] if reply is not None else None
+        if reply is None or (verdict is not None and verdict not in _VERDICTS):
+            # Classification failed — never guess with a pending item at stake
+            logger.warning("[normaliser] pending on %s, unclassified (verdict=%r) — re-asking", name, verdict)
+            return {"agent_outputs": {name: REASK_REPLY.format(summary=summary)}, "next": "synthesiser"}
+
+        text = reply[0]
         logger.info("[normaliser] pending on %s → %s", name, verdict)
 
         if verdict == "confirm":
@@ -105,7 +117,7 @@ class NormaliserNode:
                 "direct": True,
             }
 
-        # "unrelated", null, or anything unexpected — the user moved on
+        # "unrelated" or null — the user moved on
         agent.discard_pending(session_id)
         return {"user_input": text}
 
@@ -143,4 +155,6 @@ class NormaliserNode:
             return None
 
         verdict = data.get("pending")
-        return data["text"], verdict if isinstance(verdict, str) else None
+        if verdict is None:
+            return data["text"], None
+        return data["text"], str(verdict).strip().lower()

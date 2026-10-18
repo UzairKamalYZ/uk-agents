@@ -94,12 +94,36 @@ def test_null_while_pending_treated_as_unrelated():
     assert out == {"user_input": "hello"}
 
 
+REASK = (f"Sorry, I didn't catch that. Pending: {SUMMARY}. "
+         "Reply yes to save, no to discard, or send the corrected version.")
+
+
 def test_parse_failure_keeps_raw_and_pending():
     exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
     out = _node(FakeLLM("sorry, I cannot"), [exp])(_state("yes"))
-    assert out == {"user_input": "yes"}
+    assert out == {"agent_outputs": {"expenditure_tracker": REASK}, "next": "synthesiser"}
     exp.instance.discard_pending.assert_not_called()
     exp.instance.confirm_pending.assert_not_called()
+
+
+def test_parse_failure_without_pending_keeps_raw():
+    out = _node(FakeLLM("sorry, I cannot"), [_entry("conversational_agent")])(_state("helo"))
+    assert out == {"user_input": "helo"}
+
+
+def test_unknown_verdict_keeps_pending():
+    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
+    out = _node(FakeLLM(_reply("yes", "maybe")), [exp])(_state("yes"))
+    assert out == {"agent_outputs": {"expenditure_tracker": REASK}, "next": "synthesiser"}
+    exp.instance.discard_pending.assert_not_called()
+    exp.instance.confirm_pending.assert_not_called()
+
+
+def test_verdict_is_case_and_space_insensitive():
+    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
+    out = _node(FakeLLM(_reply("yes", " Confirm ")), [exp])(_state("yes"))
+    exp.instance.confirm_pending.assert_called_once_with("s1")
+    assert out["next"] == "synthesiser"
 
 
 def test_fenced_json_is_parsed():
@@ -108,13 +132,20 @@ def test_fenced_json_is_parsed():
     assert out == {"user_input": "hi there"}
 
 
-def test_llm_error_behaves_like_parse_failure():
+def test_llm_error_with_pending_reasks():
     exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
     llm = MagicMock()
     llm.invoke.side_effect = RuntimeError("boom")
     out = _node(llm, [exp])(_state("yes"))
-    assert out == {"user_input": "yes"}
+    assert out == {"agent_outputs": {"expenditure_tracker": REASK}, "next": "synthesiser"}
     exp.instance.discard_pending.assert_not_called()
+
+
+def test_llm_error_without_pending_keeps_raw():
+    llm = MagicMock()
+    llm.invoke.side_effect = RuntimeError("boom")
+    out = _node(llm, [_entry("conversational_agent")])(_state("yes"))
+    assert out == {"user_input": "yes"}
 
 
 def test_owner_only_pending_ignored_for_non_owner():

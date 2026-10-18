@@ -111,3 +111,15 @@ def test_correction_runs_agent_once_then_synthesiser():
     )
     agents[0].instance.ask.assert_not_called()
     assert answer == exp.ask.return_value
+
+
+def test_garbage_normaliser_reply_with_pending_reasks_without_supervisor():
+    agents = _agents(pending=SUMMARY)
+    llm = ScriptedLLM("not json at all", ['{"next": "conversational_agent"}'])
+    answer = _build(llm, agents).ask("yes", "s1", is_owner=True)
+    assert answer.startswith("Sorry, I didn't catch that. Pending: " + SUMMARY)
+    assert llm.supervisor_calls == 0
+    exp = agents[1].instance
+    exp.discard_pending.assert_not_called()
+    exp.confirm_pending.assert_not_called()
+    exp.ask.assert_not_called()
