@@ -13,9 +13,13 @@ class Transcriber:
         self._model_size = model_size or Config.WHISPER_MODEL
         self._model: WhisperModel | None = None
 
-    def _get_model(self) -> WhisperModel:
+    def load(self) -> None:
+        """Load the Whisper model now (idempotent) so the first voice note isn't slow."""
         if self._model is None:
             self._model = WhisperModel(self._model_size, device="cpu", compute_type="int8")
+
+    def _get_model(self) -> WhisperModel:
+        self.load()
         return self._model
 
     def transcribe(self, audio_path: str | Path) -> str:

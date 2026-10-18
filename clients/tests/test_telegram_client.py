@@ -134,6 +134,18 @@ class TestVoiceAndOwner(unittest.TestCase):
             MockCfg.TELEGRAM_OWNER_ID = owner_id
             asyncio.run(coro_fn(update, context))
 
+    def test_run_loads_whisper_model_before_polling(self):
+        bot, *_ = self._make()
+        order = MagicMock()
+        bot.transcriber.load = order.load
+        bot.app.run_polling = order.run_polling
+        bot.run()
+        self.assertEqual([c[0] for c in order.mock_calls], ["load", "run_polling"])
+
+    def test_construction_does_not_load_whisper_model(self):
+        bot, *_ = self._make()
+        bot.transcriber.load.assert_not_called()
+
     def test_voice_shows_transcript_then_answer(self):
         bot, update, context, sent, o = self._make(transcript="Colruyt 90 euros today")
         self._run(bot._handle_voice, bot, update, context, o)

@@ -97,6 +97,7 @@ class _Bot:
         await self._answer(update, transcript, header=f"🎤 You said: {transcript}\n\n")
 
     def run(self):
+        self.transcriber.load()  # load Whisper once at startup, not on the first voice note
         self.app.run_polling()
 
 

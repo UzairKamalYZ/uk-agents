@@ -61,3 +61,13 @@ def test_config_default_whisper_model_is_small():
         [sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True, check=True,
     )
     assert out.stdout.strip() == "small"
+
+
+def test_load_is_idempotent_and_reused_by_transcribe():
+    with patch("core.src.speech.transcriber.WhisperModel", return_value=_model([])) as cls:
+        t = Transcriber("tiny")
+        cls.assert_not_called()
+        t.load()
+        t.load()
+        t.transcribe("a.ogg")
+    cls.assert_called_once_with("tiny", device="cpu", compute_type="int8")
