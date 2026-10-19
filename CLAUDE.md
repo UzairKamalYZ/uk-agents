@@ -253,9 +253,10 @@ python -m pytest orchestrator/tests -q   # one area
 2. Register it in `agents.json`:
    ```json
    {"name": "x_agent", "class": "agents.x.agent.XAgent", "description": "<when to route here>",
-    "enabled": true, "rag": false, "display_name": "X Agent", "remarks": ["one-liner shown while it works"]}
+    "enabled": true, "rag": false, "display_name": "X Agent", "summary": "<what it does, for users>",
+    "remarks": ["one-liner shown while it works"]}
    ```
-   Optional keys: `owner_only`, `llm_provider`, `llm_model`. The supervisor routes on `description`, so make it precise.
+   Optional keys: `owner_only`, `llm_provider`, `llm_model`. The supervisor routes on `description`, so make it precise. `summary` is the user-facing one-liner: the conversational agent builds its "which agents do you have?" list from every enabled entry's `display_name` and `summary` (no other change needed).
 3. Tools: add a server to `mcp.json` and return `_mcp.langchain_tools(server_name="…")`. Return `[]` for no tools. Never return `None` (it means "every non-owner-only server").
 4. Add tests under `agents/<name>/tests/` and register the directory in `testpaths`.
 

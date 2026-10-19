@@ -7,6 +7,7 @@
       "enabled": true,
       "rag": false,
       "display_name": "Conversational Agent",
+      "summary": "Chat, greetings and general questions — and telling you what the other agents can do.",
       "remarks": [
         "Warming up the small-talk engine…",
         "Polishing its best 'how do you do'…",
@@ -20,6 +21,7 @@
       "enabled": true,
       "rag": true,
       "display_name": "Property Search Agent",
+      "summary": "Searches property listings that match your criteria.",
       "remarks": [
         "Why do real estate agents make great comedians? Because they always know how to close!",
         "What do you call a haunted property? A buy-one-get-one-scare deal.",
@@ -34,6 +36,7 @@
       "enabled": true,
       "rag": false,
       "display_name": "Finance Agent",
+      "summary": "Stock prices, stock analysis and investment questions (Yahoo Finance).",
       "remarks": [
         "Squinting at candlestick charts like they're tea leaves…",
         "Buying low, selling high, and mostly drinking coffee…",
@@ -47,6 +50,7 @@
       "enabled": true,
       "rag": true,
       "display_name": "WhatsApp Agent",
+      "summary": "Short, mobile-friendly property answers (also behind the WhatsApp group listener).",
       "remarks": [
         "Typing… stops typing… typing again…",
         "Keeping it short — this is WhatsApp, not a novel."
@@ -59,6 +63,7 @@
       "enabled": true,
       "rag": false,
       "display_name": "Mail Agent",
+      "summary": "Questions about your emails, summaries and drafting replies.",
       "remarks": [
         "Digging through the inbox so you don't have to…",
         "Politely ignoring 47 newsletters on your behalf…"
@@ -71,6 +76,7 @@
       "enabled": true,
       "rag": false,
       "display_name": "Expenditure Tracker",
+      "summary": "Logs your spending (\"Aldi 10\" or a voice note), undoes the last entry, monthly totals, top expenses and per-shop breakdown.",
       "remarks": [
         "Counting your coins — every cent, no judgement. Well, a little judgement.",
         "Opening the wallet ledger with trembling hands…",
@@ -85,6 +91,7 @@
       "enabled": true,
       "rag": false,
       "display_name": "FBR-PK Tax Filing",
+      "summary": "Prepares your Pakistan FBR income tax return and wealth statement on IRIS in Chrome, up to a saved draft, and answers questions about past returns.",
       "remarks": [
         "Brewing chai and opening IRIS — this may take a while…",
         "Counting rupees twice, filing once…",
