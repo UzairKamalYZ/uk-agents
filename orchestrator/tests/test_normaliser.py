@@ -188,3 +188,23 @@ def test_unrelated_discard_error_replies_sorry():
     e.instance.discard_pending.side_effect = OSError("disk")
     out = _node(FakeLLM(_reply("weather?", "unrelated")), [e])(_state("weather?"))
     assert out == {"agent_outputs": {"expenditure_tracker": ERROR}, "next": "synthesiser"}
+
+
+def test_follow_up_is_rewritten_with_history_and_logged(caplog):
+    history = "user: Aldi 10\nexpenditure_tracker: Saved. Want the per-shop breakdown for October?"
+    llm = FakeLLM(_reply("Yes, show me the per-shop breakdown for October."))
+    node = NormaliserNode(llm, "Today {today}. History: {history}. Pending: {pending}", [],
+                          today=lambda: date(2026, 10, 18))
+    state = {**_state("yes"), "history": history, "request_id": "r1"}
+    with caplog.at_level("INFO", logger="orchestrator.nodes.normaliser"):
+        out = node(state)
+    assert out == {"user_input": "Yes, show me the per-shop breakdown for October."}
+    assert f"History: {history}." in llm.calls[0][0].content
+    assert "request=r1 rewrote 'yes'" in caplog.text
+
+
+def test_no_history_renders_none():
+    llm = FakeLLM(_reply("hi"))
+    node = NormaliserNode(llm, "History: {history}", [], today=lambda: date(2026, 10, 18))
+    node(_state("hi"))
+    assert llm.calls[0][0].content == "History: None"

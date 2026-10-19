@@ -7,8 +7,8 @@ from orchestrator.agent_registry import AgentEntry
 
 SUMMARY = "2026-10-18 | Colruyt | 90.00"
 PROMPTS = {
-    "normaliser": "NORMALISER today={today} pending={pending}",
-    "supervisor": "SUPERVISOR {agents} {user_input} {agent_outputs}",
+    "normaliser": "NORMALISER today={today} pending={pending} history={history}",
+    "supervisor": "SUPERVISOR {agents} history={history} {user_input} {agent_outputs}",
     "synthesiser": "SYNTHESISER",
 }
 
@@ -67,13 +67,26 @@ _CONFIG = SimpleNamespace(
 )
 
 
-def _build(llm, agents):
+class MemoryStore:
+    """In-memory stand-in for SessionManager (same load/append interface)."""
+
+    def __init__(self):
+        self.rows: dict[tuple[str, str], list] = {}
+
+    def load(self, agent, session_id, limit):
+        return self.rows.get((agent, session_id), [])[-limit:]
+
+    def append(self, agent, session_id, messages):
+        self.rows.setdefault((agent, session_id), []).extend(messages)
+
+
+def _build(llm, agents, store=None):
     with patch("orchestrator.graph.Config", _CONFIG), \
          patch("orchestrator.graph.create_llm", return_value=llm), \
          patch("orchestrator.graph.load_agents", return_value=agents), \
          patch("orchestrator.graph.load_prompt", side_effect=_load_prompt):
         from orchestrator.graph import MultiAgentGraph
-        return MultiAgentGraph()
+        return MultiAgentGraph(history_store=store or MemoryStore())
 
 
 def test_yes_without_pending_goes_to_supervisor():
@@ -164,3 +177,49 @@ def test_routing_is_logged_with_request_id_and_reason(caplog):
          patch("orchestrator.graph.new_request_id", return_value="req123"):
         _build(llm, agents).ask("Aldi 10", "s1", is_owner=True)
     assert "[route] request=req123 supervisor → expenditure_tracker (an expense)" in caplog.text
+
+
+class RecordingLLM(ScriptedLLM):
+    """ScriptedLLM that also keeps every system prompt it was sent."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.prompts = []
+
+    def invoke(self, messages):
+        self.prompts.append(messages[0].content)
+        return super().invoke(messages)
+
+
+def test_follow_up_sees_previous_turn_and_reaches_the_agent_that_asked():
+    agents = _agents(pending=None)
+    exp = agents[1].instance
+    store = MemoryStore()
+    exp.ask.return_value = "Saved. Want the per-shop breakdown for October?"
+    first = RecordingLLM(json.dumps({"text": "Aldi €10", "pending": None}),
+                         ['{"next": "expenditure_tracker"}', '{"next": "FINISH"}'])
+    _build(first, agents, store).ask("Aldi 10", "chat-1", is_owner=True)
+    assert "history=None" in first.prompts[0]  # first turn: nothing to go on yet
+
+    # Second turn: the normaliser rewrites "yes" using the history; the supervisor sees it too
+    exp.ask.return_value = "Breakdown: Aldi €10"
+    second = RecordingLLM(json.dumps({"text": "Yes, show me the per-shop breakdown for October.", "pending": None}),
+                          ['{"next": "expenditure_tracker"}', '{"next": "FINISH"}'])
+    answer = _build(second, agents, store).ask("yes", "chat-1", is_owner=True)
+    assert answer == "Breakdown: Aldi €10"
+    exp.ask.assert_called_with("Yes, show me the per-shop breakdown for October.", session_id="chat-1")
+    expected_history = ("user: Aldi 10\n"
+                        "expenditure_tracker: Saved. Want the per-shop breakdown for October?")
+    assert expected_history in second.prompts[0]                      # normaliser
+    assert any(expected_history in p for p in second.prompts if p.startswith("SUPERVISOR"))
+
+
+def test_history_is_kept_per_session():
+    agents = _agents(pending=None)
+    store = MemoryStore()
+    llm = RecordingLLM(json.dumps({"text": "hi", "pending": None}), ['{"next": "conversational_agent"}'])
+    _build(llm, agents, store).ask("hi", "chat-A")
+    other = RecordingLLM(json.dumps({"text": "hi", "pending": None}), ['{"next": "conversational_agent"}'])
+    _build(other, agents, store).ask("hi", "chat-B")
+    assert "history=None" in other.prompts[0]
+    assert [m.content for m in store.rows[("orchestrator", "chat-A")]] == ["hi", "Hello!"]

@@ -105,7 +105,9 @@ class NormaliserNode:
         session_id = state.get("session_id", "default")
         pending_agent, summary = self._find_pending(session_id, state.get("is_owner", False))
 
-        reply = self._classify(raw, summary)
+        reply = self._classify(raw, summary, state.get("history") or "")
+        if reply is not None and reply[0] != raw and state.get("history"):
+            logger.info("[normaliser] request=%s rewrote %r → %r", state.get("request_id"), raw, reply[0])
         if pending_agent is None:
             return {"user_input": reply[0] if reply is not None else raw}
 
@@ -157,13 +159,14 @@ class NormaliserNode:
                 return entry, summary
         return None, None
 
-    def _classify(self, raw: str, summary: str | None) -> tuple[str, str | None] | None:
+    def _classify(self, raw: str, summary: str | None, history: str = "") -> tuple[str, str | None] | None:
         """One LLM call → (cleaned_text, verdict), or None on any failure."""
         today = self._today()
         prompt = (
             self._prompt_template
             .replace("{today}", f"{today.isoformat()} ({today.strftime('%A')})")
             .replace("{pending}", summary if summary is not None else "None")
+            .replace("{history}", history or "None")
         )
         try:
             content = self._llm.invoke([SystemMessage(content=prompt), HumanMessage(content=raw)]).text

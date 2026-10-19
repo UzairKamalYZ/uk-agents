@@ -59,6 +59,7 @@ from langgraph.graph import END, START, StateGraph
 
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
+from core.src.model.session_manager import SessionManager
 from core.src.utils import load_prompt
 
 # Register LangSmith env vars so traces from the orchestrator appear in the
@@ -70,6 +71,7 @@ if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
 from .agent_registry import AgentEntry, load_agents
+from .conversation import ConversationMemory
 from .nodes import AgentNode, NormaliserNode, SupervisorNode, SynthesiserNode
 from .state import MAX_AGENT_TURNS, GraphState
 from .tracing import new_request_id
@@ -183,7 +185,10 @@ class MultiAgentGraph:
     6. Compile the graph.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, history_store: SessionManager | None = None) -> None:
+
+        # Recent turns per session, so follow-ups ("yes", "do that too") keep their context
+        self._memory = ConversationMemory(history_store or SessionManager(Config.SESSION_DB_FILE))
 
         # -----------------------------------------------------------------
         # 1. Shared LLM — same model drives normaliser, supervisor and synthesiser
@@ -267,11 +272,12 @@ class MultiAgentGraph:
     # Public interface
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _initial_state(user_input: str, session_id: str, is_owner: bool) -> GraphState:
-        """Fresh state for one user turn: everything empty, turns at zero, a new request_id."""
+    def _initial_state(self, user_input: str, session_id: str, is_owner: bool) -> GraphState:
+        """Fresh state for one user turn: a new request_id, the session's recent conversation,
+        everything else empty and turns at zero."""
         return {
             "request_id": new_request_id(),
+            "history": self._memory.recent(session_id),
             "user_input": user_input,
             "session_id": session_id,
             "messages": [],
@@ -367,6 +373,7 @@ class MultiAgentGraph:
         answer = outputs.get("synthesiser", "")
         if not answer:
             logger.warning("[MultiAgentGraph] no synthesiser output in final state")
+        self._memory.record(session_id, user_input, answer, [n for n in outputs if n != "synthesiser"])
         return answer
 
     def _routed_agents(self, event: dict[str, Any]) -> list[str]:

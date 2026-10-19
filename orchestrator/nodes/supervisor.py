@@ -60,6 +60,7 @@ class SupervisorNode:
 
         prompt = (
             self._prompt_template
+            .replace("{history}", state.get("history") or "None")
             .replace("{user_input}", state["user_input"])
             .replace("{agent_outputs}", agent_outputs_text)
         )

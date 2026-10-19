@@ -45,9 +45,15 @@ def test_regular_agent_ignores_owner_flag():
 
 
 def test_graph_initial_state_carries_owner_flag():
+    from unittest.mock import MagicMock
+
     from orchestrator.graph import MultiAgentGraph
 
-    st = MultiAgentGraph._initial_state("hello", "s", True)
+    graph = MultiAgentGraph.__new__(MultiAgentGraph)  # skip building LLMs and agents
+    graph._memory = MagicMock()
+    graph._memory.recent.return_value = ""
+    st = graph._initial_state("hello", "s", True)
+    assert st["history"] == ""
     assert st["is_owner"] is True
     assert st["raw_input"] == "hello"
     assert st["direct"] is False

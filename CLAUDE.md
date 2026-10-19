@@ -41,6 +41,7 @@ uk-agents/
 │   ├── agent_registry.py       # load_agents(): agents.json → AgentEntry list
 │   ├── state.py                # GraphState TypedDict, MAX_AGENT_TURNS
 │   ├── tracing.py              # record_route / tag_current_trace (logs + LangSmith)
+│   ├── conversation.py         # ConversationMemory — last turns per session for follow-ups
 │   ├── nodes/                  # normaliser, supervisor, agent, synthesiser, _json helper
 │   ├── prompts/                # normaliser.txt, supervisor.txt, synthesiser.txt
 │   └── tests/
@@ -90,7 +91,16 @@ MultiAgentGraph (orchestrator/graph.py)
 | `agent_X` (`AgentNode`) | Calls `agent.ask(user_input, session_id=...)`. Refuses `owner_only` agents when `is_owner` is false. |
 | `synthesiser` | One output: passed through unchanged, with no LLM call. Several outputs: an LLM merge. The `Last month:` / `This month:` lines are always kept word for word. |
 
-`GraphState` fields: `user_input` (cleaned), `raw_input`, `session_id`, `request_id`, `is_owner`, `messages`, `agent_outputs`, `next`, `direct`, `turns`.
+`GraphState` fields: `user_input` (cleaned), `raw_input`, `session_id`, `request_id`, `history`, `is_owner`, `messages`, `agent_outputs`, `next`, `direct`, `turns`.
+
+### Follow-ups (`orchestrator/conversation.py`)
+
+`MultiAgentGraph` keeps the last `HISTORY_TURNS` (3) user/assistant turns per session in `sessions.db` (pseudo-agent `"orchestrator"`, answers labelled with the agent name). `_initial_state` loads them into `state["history"]`, and `ask()` records each finished turn.
+- The normaliser rewrites follow-ups ("yes" after "Want the breakdown?") into self-contained requests.
+- Supervisor rule 0 routes a continuation to the agent that asked.
+- Without this, a reply to the bot's own question is routed as a brand-new conversation.
+
+Pass `MultiAgentGraph(history_store=...)` to inject a store; tests use an in-memory fake.
 
 ### Agent announcement (`on_route`)
 
@@ -241,7 +251,7 @@ Create `clients/<name>/main.py` and `__init__.py`, implement `BaseClient`, call 
 
 ### Prompts
 
-- Orchestrator prompts keep their placeholders: normaliser `{today}` `{pending}`; supervisor `{agents}` `{user_input}` `{agent_outputs}`.
+- Orchestrator prompts keep their placeholders: normaliser `{today}` `{history}` `{pending}`; supervisor `{agents}` `{history}` `{user_input}` `{agent_outputs}`.
 - The property agent's `reformulated_prompt.txt` keeps `{user_prompt}`.
 - Prompts describe intents, never tool names, and never hold conditional business logic. Put that in code.
 

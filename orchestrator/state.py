@@ -82,6 +82,11 @@ class GraphState(TypedDict):
         True when a pre-supervisor step has already decided the routing
         (bypassing the supervisor LLM).  False at graph entry.
 
+    history : str
+        The session's last few user/assistant turns ("user: …" / "<agent>: …"
+        lines, oldest first; "" for a new conversation).  Shown to the
+        normaliser and supervisor so follow-ups keep their context.
+
     request_id : str
         Short id for this user turn.  Written into routing log lines and the
         LangSmith trace metadata so logs and traces can be matched up.
@@ -97,3 +102,4 @@ class GraphState(TypedDict):
     raw_input: str
     direct: bool
     request_id: str
+    history: str

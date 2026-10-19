@@ -201,6 +201,7 @@ class GraphState(TypedDict):
     raw_input: str                           # the message exactly as received
     session_id: str
     request_id: str                          # short id per turn — in logs and LangSmith metadata
+    history: str                             # last 3 user/assistant turns of this session
     is_owner: bool                           # gates agents marked "owner_only"
     messages: Annotated[list, add_messages]  # append-only
     agent_outputs: dict[str, str]            # name → answer collected so far
@@ -230,6 +231,24 @@ The conditional edge logic (the *router*) runs after every supervisor call:
 ### Normaliser node (`orchestrator/nodes/normaliser.py`)
 
 First node of every turn. One LLM call cleans the message (voice-transcription fixes, spoken numbers → `€90`, "yesterday" → `YYYY-MM-DD`, no currency → euros) and, when an agent holds a pending item (e.g. an expense awaiting "yes"), classifies the reply as confirm / cancel / correction / unrelated. Confirm and cancel are resolved in code without the supervisor, so a bare "yes" never ends up as small talk.
+
+### Follow-ups keep their context
+
+Agents often end with a question ("Want the per-shop breakdown for October?"). The user's reply only makes sense with that question, so the orchestrator keeps a short **conversation memory**: the last 3 user/assistant turns per session, in `sessions.db` under the pseudo-agent `orchestrator` (`orchestrator/conversation.py`). It survives restarts.
+
+```
+user:  Aldi 10
+bot:   ✅ Expense saved … Want the per-shop breakdown for October?   (expenditure_tracker)
+user:  yes
+         normaliser (sees history)  → "Yes, show me the per-shop breakdown for October."
+         supervisor (sees history)  → expenditure_tracker  (rule 0: the agent that asked)
+bot:   🧾 Spending by place — October 2026 …
+```
+
+- The **normaliser** rewrites a follow-up ("yes", "and for last month?", "also Lidl 5") into one self-contained request, so every agent, including a different one, gets the full intent. Messages that already stand alone are left unchanged. Short confirmations of a pending item are classified rather than rewritten.
+- The **supervisor** gets the same history and routes a continuation to the agent that wrote the last answer, unless the request clearly belongs elsewhere.
+- Rewrites are logged: `[normaliser] request=… rewrote 'yes' → '…'`.
+- Only the blocking `ask()` path records turns. `stream=True` reads the history but doesn't save its own turn.
 
 ### Telling the user which agent is working
 
