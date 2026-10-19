@@ -51,7 +51,8 @@ uk-agents/
 │   ├── finance/                # stocks (Yahoo Finance MCP)
 │   ├── whatsapp/               # WhatsApp agent + standalone group listener
 │   ├── mails/                  # mail agent + standalone IMAP monitor
-│   └── expenditure/            # expense tracker: SQLite ledger + in-process tools
+│   ├── expenditure/            # expense tracker: SQLite ledger + in-process tools
+│   └── fbr_tax/                # FBR IRIS filing: Claude Code session + skill + Chrome
 │       └── (each agent: agent.py, prompts/System_Prompt.txt, optional tests/, main.py)
 ├── clients/
 │   ├── base.py                 # BaseClient ABC (start / stop / context manager)
@@ -147,6 +148,16 @@ Optional hooks for agents that keep a "pending item awaiting yes/no" (the normal
 - **Rules.** Totals are always computed in SQL or Python, and Claude returns the tool's text word for word.
 - Full design and roadmap: `docs/expenditure-tracker.md`.
 
+### FBR tax filing (`agents/fbr_tax/`)
+
+- Runs the user's `fbr-iris-filing` skill (in `FBR_TAX_DIR`, default `~/work/fbr-tax-filing`) through a Claude Code session with Claude in Chrome. `ask()` bypasses `LlmModelGraph`: each chat message is one **resumed** turn of that session (`runner.py`). The chat-to-Claude-session map is the `fbr_tax_sessions` table in `sessions.db`; a session idle for more than 12 h, or one whose turn failed, is not resumed.
+- Always uses the local `claude` CLI login, whatever `ANTHROPIC_API` says, because Chrome only exists there.
+- Permissions are enforced in code: built-in tools are limited to Read/Write/Edit/Glob/Grep (no Bash, no web), writes are allowed only under `snapshots/` and the skill's `iris-notes.md`, plus `mcp__claude-in-chrome`. `permission_mode="dontAsk"` denies everything else.
+- Only one turn runs at a time (one browser); a second message gets `BUSY`.
+- It never goes past Save Draft. It may click Submit only when the user's own latest message says so, and the e-filing PIN is always typed by the user (`prompts/System_Prompt.txt` adds this on top of the skill's hard rules).
+- `owner_only: true`: needs `TELEGRAM_OWNER_ID` in `.env`.
+- Replies (amounts) pass through the orchestrator, so they reach Telegram, `sessions.db` and LangSmith traces. The tax snapshots themselves stay in `FBR_TAX_DIR`.
+
 ### Clients (`clients/`)
 
 All clients implement `BaseClient` (`start()` blocks; `stop()`; context manager) and call `setup_logging()` first.
@@ -182,9 +193,10 @@ All settings live in `.env` at the project root. `core/src/config/config.py` loa
 | `NORMALISER_PROMPT_FILE` / `SUPERVISOR_PROMPT_FILE` / `SYNTHESISER_PROMPT_FILE` | `orchestrator/prompts/*.txt` | Orchestrator prompts |
 | `AGENTS_FILE` / `MCP_FILE` | `agents.json` / `mcp.json` | Registries (resolved from the project root) |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | From @BotFather |
-| `TELEGRAM_OWNER_ID` | _(empty)_ | Owner's Telegram user id; only matters for agents marked `"owner_only": true` (none today) |
+| `TELEGRAM_OWNER_ID` | _(empty)_ | Owner's Telegram user id; agents marked `"owner_only": true` (`fbr_tax_filing`) refuse everyone while it is empty |
 | `WHISPER_MODEL` | `small` | faster-whisper size: `tiny` / `base` / `small` / `medium` / `large-v3` |
 | `EXPENSES_DIR` | _(per-user data dir)_ | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `%APPDATA%\uk-agents\expenses` (Windows). Relative paths resolve from the project root |
+| `FBR_TAX_DIR` / `FBR_TAX_MAX_TURNS` | `~/work/fbr-tax-filing` / `200` | FBR filing project (holds the skill and `snapshots/`); max tool calls per filing step |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `API_KEY` | _(empty — auth off)_ | REST `X-API-Key` |
 | `MAX_HISTORY_TURNS` | `10` | Turns of chat history sent to the LLM per agent and session |
@@ -265,6 +277,6 @@ Create `clients/<name>/main.py` and `__init__.py`, implement `BaseClient`, call 
   - `ANTHROPIC_API=false` uses `ChatClaudeCode`, which runs the local `claude` CLI through the Agent SDK. Bound tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`. Built-in Claude Code tools and user settings are disabled.
   - `core/tests/model/test_llm_factory.py` fails when `core/tests` runs alone with `ANTHROPIC_API=false` in `.env`. It passes in the full suite.
 - **Chat history is persistent.** `BaseAgent` gives each `LlmModelGraph` a `SessionManager(Config.SESSION_DB_FILE)`, so history is kept per (agent class name, session_id) in `sessions.db` and survives restarts. Only the last `MAX_HISTORY_TURNS` turns go to the LLM. An `LlmModelGraph` built without `history_store` (as in tests) keeps history in memory. Expenses live separately in `expenses.db`; mail state in `MAIL_SEEN_DB`.
-- **Owner lock.** `owner_only` exists in `agents.json` (agent refusal plus pending isolation) and in `mcp.json` (tool scoping). Nothing uses it today. The expense tools are not in `mcp.json` at all; only `ExpenditureAgent` binds them, so other agents can never write the ledger.
+- **Owner lock.** `owner_only` exists in `agents.json` (agent refusal plus pending isolation) and in `mcp.json` (tool scoping). Only `fbr_tax_filing` uses it: it controls a browser logged in to the tax portal. The expense tools are not in `mcp.json` at all; only `ExpenditureAgent` binds them, so other agents can never write the ledger.
 - **Never log secrets.** Telegram URLs contain the bot token. Keep `httpx` at WARNING in `logging_config.py`.
 - **Pinecone required for RAG agents.** `property_agent` and `whatsapp_agent` need `PINECONE_API_KEY` and network access at startup.

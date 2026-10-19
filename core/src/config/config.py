@@ -69,6 +69,11 @@ class Config:
     # Expense ledger + input log — kept outside the project in the user data dir;
     # a relative EXPENSES_DIR is resolved from the project root, "~" is expanded
     EXPENSES_DIR = str(_PROJECT_ROOT / Path(os.getenv("EXPENSES_DIR") or _user_data_dir() / "expenses").expanduser())
+    # FBR (Pakistan) tax filing — the project holding the fbr-iris-filing skill and its snapshots/;
+    # a relative path is resolved from the project root, "~" is expanded
+    FBR_TAX_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DIR") or "~/work/fbr-tax-filing").expanduser())
+    # Tool calls one filing step may take (reading a whole return is many browser actions)
+    FBR_TAX_MAX_TURNS = int(os.getenv("FBR_TAX_MAX_TURNS", "200"))
     # Local faster-whisper model size for voice transcription
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))
