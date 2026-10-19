@@ -6,6 +6,7 @@ Files your Pakistan income tax return (Form 114(1)) and wealth statement (Form 1
 
 - The Mac awake, Chrome open, and the Claude in Chrome extension connected.
 - `claude` logged in on the Mac. The agent always uses that login, not `ANTHROPIC_API_KEY`.
+- Your IRIS login saved in Chrome's password manager. Log in to IRIS once by hand and accept Chrome's "Save password?" prompt, or add it in Chrome → Settings → Passwords. After that, logging in is one click when the agent asks.
 - Optional: set `FBR_TAX_DIR` if the filing project lives somewhere else.
 
 ## Before any draft: the status check
@@ -26,7 +27,8 @@ A record that isn't "submitted" is trusted for 12 hours; after that the agent ch
 ```
 you:  file my FBR return
 bot:  🤖 FBR-PK Tax Filing is working on your query…
-bot:  Opened IRIS in Chrome. Please log in, then tell me when you're on the home screen.
+bot:  Opened IRIS in Chrome. Please log in on the Mac (Chrome fills your saved password),
+      then tell me when you're on the home screen.
 you:  logged in
 bot:  Read-only (capture last year's return) or full filing? Tax year 2027?
 you:  full, 2027
@@ -39,7 +41,7 @@ bot:  Draft saved in IRIS. Review it and submit it yourself in IRIS,
 ```
 
 - **Each message is one step.** The agent resumes the same Claude Code session, so it remembers where the filing is. After 12 hours without a message, or after an error, the next message starts a new session. The skill's checkpoint file (`snapshots/<year>.draft.json`) lets it resume from the last completed step.
-- **You log in.** It never types your CNIC, password, OTP or PIN.
+- **You log in.** It never types your CNIC, password, OTP or PIN. If Chrome is still logged in to IRIS, it carries on without asking; otherwise it asks you to log in, and Chrome fills the saved password.
 - **Submission.** It stops at Save Draft. It clicks Submit only when your own message says so, and even then you type the 4-digit e-filing PIN yourself.
 - **One step at a time.** There is one browser. A message sent while a step is running gets "Still working…".
 - **A step can take minutes.** Reading a whole return is many page loads.
