@@ -37,3 +37,6 @@ expenses/
 /.claude/
 /agentP/.agents/
 /agentP/skills-lock.json
+
+# Chat history (core/src/model/session_manager.py)
+sessions.db*

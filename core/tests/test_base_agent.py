@@ -69,6 +69,11 @@ class TestBaseAgent(unittest.TestCase):
     def test_should_create_llm_with_config_values(self):
         self.mock_create_llm.assert_called_once()
 
+    def test_should_give_llm_model_graph_a_persistent_history_store(self):
+        from core.src.model.session_manager import SessionManager
+        store = self.mock_graph_cls.call_args.kwargs["history_store"]
+        self.assertIsInstance(store, SessionManager)
+
     def test_should_pass_system_prompt_to_llm_model_graph(self):
         _, kwargs = self.mock_graph_cls.call_args
         self.assertEqual(kwargs["system_prompt"], _FAKE_PROMPT)

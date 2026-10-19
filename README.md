@@ -732,7 +732,7 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 | `SYNTHESISER_PROMPT_FILE` | `orchestrator/prompts/synthesiser.txt` | Synthesiser merge prompt |
 | `AGENTS_FILE` | `agents.json` | Agent registry |
 | `MCP_FILE` | `mcp.json` | MCP server registry |
-| `SESSION_DB_FILE` | `sessions.db` | SQLite session history |
+| `SESSION_DB_FILE` | `sessions.db` | SQLite chat history per agent and session (project root); survives restarts |
 | `MAX_HISTORY_TURNS` | `10` | Sliding window depth |
 
 ### Clients

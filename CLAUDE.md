@@ -31,7 +31,7 @@ uk-agents/
 │   │   ├── mcp_registry.py     # stdio/HTTP MCP clients → LangChain StructuredTools
 │   │   ├── mcp_tools.py        # _mcp registry singleton built from mcp.json
 │   │   ├── embedder.py, rag_context_manager.py, context_builder.py
-│   │   └── session_manager.py  # (unused — chat history is in memory, see Gotchas)
+│   │   └── session_manager.py  # SessionManager — SQLite chat history per (agent, session)
 │   ├── src/persistence/        # VectorStore ABC, factory, PineconeStore
 │   ├── src/speech/transcriber.py  # Local faster-whisper speech-to-text
 │   └── tests/
@@ -166,9 +166,9 @@ All settings live in `.env` at the project root. `core/src/config/config.py` loa
 | `STORE_TYPE` | `pinecone` | Vector store backend (Pinecone only) |
 | `PINECONE_API_KEY` / `PINECONE_ENVIRONMENT` / `PINECONE_INDEX_NAME` | — | Pinecone connection |
 | `SENTENCE_TRANSFORMER_MODEL` | — | Embedding model, e.g. `sentence-transformers/all-MiniLM-L6-v2` (384-d) |
-| `PROMPT_FILE` | _(required)_ | Property agent system prompt; should be `agents/property/prompts/System_Prompt.txt` |
-| `INTERACTION_FILE` / `REFORMULATION_PROMPT` | _(required)_ | Property agent extras in `agents/property/prompts/`; `Config` crashes at import if unset |
-| `URLS_FILE` | — | URL list for property scraping |
+| `PROMPT_FILE` | `agents/property/prompts/System_Prompt.txt` | Property agent system prompt (resolved from the project root) |
+| `INTERACTION_FILE` / `REFORMULATION_PROMPT` | `agents/property/prompts/interaction.json` / `…/reformulated_prompt.txt` | Property agent extras |
+| `URLS_FILE` | `agents/property/urls.txt` | URL list for property scraping |
 | `NORMALISER_PROMPT_FILE` / `SUPERVISOR_PROMPT_FILE` / `SYNTHESISER_PROMPT_FILE` | `orchestrator/prompts/*.txt` | Orchestrator prompts |
 | `AGENTS_FILE` / `MCP_FILE` | `agents.json` / `mcp.json` | Registries (resolved from the project root) |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | From @BotFather |
@@ -177,7 +177,9 @@ All settings live in `.env` at the project root. `core/src/config/config.py` loa
 | `EXPENSES_DIR` | _(per-user data dir)_ | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `%APPDATA%\uk-agents\expenses` (Windows). Relative paths resolve from the project root |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `API_KEY` | _(empty — auth off)_ | REST `X-API-Key` |
-| `MAX_HISTORY_TURNS` | `10` | In-memory chat history kept per agent and session |
+| `MAX_HISTORY_TURNS` | `10` | Turns of chat history sent to the LLM per agent and session |
+| `SESSION_DB_FILE` | `sessions.db` | SQLite chat history (project root; git-ignored); survives restarts |
+| `CRON_SEARCH_PROMPT` | _(2-bed apartments in Poland < 1000)_ | Prompt the cron client sends every run |
 | `SBR_WEBDRIVER` | _(empty)_ | Selenium WebDriver URL for property scraping |
 | `WHATSAPP_*`, `MAIL_*` | — | Green API and IMAP settings for the standalone services (see `config.py`) |
 | `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | `false` / — / `uk-agents` | LangSmith tracing |
@@ -252,8 +254,7 @@ Create `clients/<name>/main.py` and `__init__.py`, implement `BaseClient`, call 
 - **Two Claude backends.**
   - `ANTHROPIC_API=false` uses `ChatClaudeCode`, which runs the local `claude` CLI through the Agent SDK. Bound tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`. Built-in Claude Code tools and user settings are disabled.
   - `core/tests/model/test_llm_factory.py` fails when `core/tests` runs alone with `ANTHROPIC_API=false` in `.env`. It passes in the full suite.
-- **Chat history is in memory.** `LlmModelGraph._histories` is per agent and per session, and is lost on restart. `SessionManager` / `SESSION_DB_FILE` exist but nothing uses them. Durable data lives elsewhere: expenses in `expenses.db`, mail state in `MAIL_SEEN_DB`.
+- **Chat history is persistent.** `BaseAgent` gives each `LlmModelGraph` a `SessionManager(Config.SESSION_DB_FILE)`, so history is kept per (agent class name, session_id) in `sessions.db` and survives restarts. Only the last `MAX_HISTORY_TURNS` turns go to the LLM. An `LlmModelGraph` built without `history_store` (as in tests) keeps history in memory. Expenses live separately in `expenses.db`; mail state in `MAIL_SEEN_DB`.
 - **Owner lock.** `owner_only` exists in `agents.json` (agent refusal plus pending isolation) and in `mcp.json` (tool scoping). The expense tracker is not owner-only in `agents.json`, but its MCP server is, so other agents can never write the ledger.
 - **Never log secrets.** Telegram URLs contain the bot token. Keep `httpx` at WARNING in `logging_config.py`.
-- **Known issue.** `clients/cron/main.py` reads `Config.CRON_SEARCH_PROMPT`, which `Config` doesn't define. The cron job fails at run time until it's added.
 - **Pinecone required for RAG agents.** `property_agent` and `whatsapp_agent` need `PINECONE_API_KEY` and network access at startup.
