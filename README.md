@@ -19,7 +19,7 @@ All agents share the same foundation:
 | `whatsapp_agent` | Short, mobile-friendly property answers | RAG (Pinecone) | Orchestrator |
 | `mail_agent` | Questions about emails, drafting replies | — | Orchestrator |
 | `expenditure_tracker` | Logs spending ("Aldi 10"), undo, monthly totals, top expenses, per-shop breakdown — see [docs/expenditure-tracker.md](docs/expenditure-tracker.md) | SQLite + in-process tools | Orchestrator |
-| `fbr_tax_filing` | Prepares your Pakistan FBR return + wealth statement on IRIS in Chrome (your `fbr-iris-filing` skill), up to a saved draft — see [docs/fbr-tax-filing.md](docs/fbr-tax-filing.md) | Claude Code session + Claude in Chrome | Orchestrator, **owner only** |
+| `fbr_tax_filing` | Prepares your Pakistan FBR return + wealth statement on IRIS in Chrome (your `fbr-iris-filing` skill), up to a saved draft — see [docs/fbr-tax-filing.md](docs/fbr-tax-filing.md) | Claude Code session + Claude in Chrome | Orchestrator |
 | WhatsApp listener | Detects when Uzair is mentioned in a group and auto-replies | Green API | Standalone (`agents.whatsapp.main`) |
 | Mail monitor | Summarises new emails across inboxes and sends a digest | IMAP + Green API | Standalone (`agents.mails.main`) |
 

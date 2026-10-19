@@ -88,7 +88,11 @@ def test_record_overwrites_and_validates(tracker):
 
 def test_server_tools(tracker, monkeypatch):
     monkeypatch.setattr(tracker_mod, "create_sdk_mcp_server", lambda name, tools: {t.name: t.handler for t in tools})
-    handlers = build_server(tracker)
+    snaps = tracker._db_path.parent / "snapshots"
+    snaps.mkdir(parents=True)
+    (snaps / "2026.json").write_text('{"status": "submitted", "last_completed_step": 9}')
+    (snaps / "2027.draft.json").write_text("not json")
+    handlers = build_server(tracker, snaps)
     run = lambda name, args: asyncio.run(handlers[name](args))["content"][0]["text"]
     assert run("show_filing_records", {}) == "Nothing recorded yet."
     assert run("record_filing_status", {"tax_year": 2026, "status": "submitted"}).startswith("Recorded TY2026: submitted")
@@ -97,3 +101,10 @@ def test_server_tools(tracker, monkeypatch):
     run("record_filing_status", {"tax_year": 2027, "status": "not_started", "draft_count": 0})
     assert run("decide_filing_action", {"tax_year": 2027}).startswith("create_draft:")
     assert "TY2026: submitted" in run("show_filing_records", {})
+    assert run("list_snapshots", {}) == (
+        "snapshots/2026.json: status=submitted, last_completed_step=9\nsnapshots/2027.draft.json: unreadable"
+    )
+
+
+def test_list_snapshots_empty(tmp_path):
+    assert tracker_mod.list_snapshots(tmp_path / "missing") == "No snapshot files."

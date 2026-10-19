@@ -6,7 +6,6 @@ Files your Pakistan income tax return (Form 114(1)) and wealth statement (Form 1
 
 - The Mac awake, Chrome open, and the Claude in Chrome extension connected.
 - `claude` logged in on the Mac. The agent always uses that login, not `ANTHROPIC_API_KEY`.
-- `TELEGRAM_OWNER_ID` set in `.env` to your Telegram user id (from @userinfobot). The agent is owner-only and refuses everyone while this is empty.
 - Optional: set `FBR_TAX_DIR` if the filing project lives somewhere else.
 
 ## Before any draft: the status check

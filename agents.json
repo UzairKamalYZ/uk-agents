@@ -84,7 +84,6 @@
       "description": "Prepares the owner's Pakistan (FBR) income tax return and wealth statement on the FBR IRIS portal by controlling Chrome, up to a saved draft, and answers questions about past FBR returns. Route here for any message about FBR, IRIS, Pakistan income tax, tax returns, wealth statements, filing status, or replies during an ongoing filing (logged in, bank balances in rupees, approving the draft). Does not handle personal spending, stocks or property.",
       "enabled": true,
       "rag": false,
-      "owner_only": true,
       "display_name": "FBR-PK Tax Filing",
       "remarks": [
         "Brewing chai and opening IRIS — this may take a while…",

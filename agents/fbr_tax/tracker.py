@@ -16,6 +16,7 @@ in-process MCP server ("fbr_tracker").
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -145,7 +146,20 @@ def _describe(f: Filing) -> str:
     return f"TY{f.tax_year}: {f.status}, drafts={f.draft_count}, checked {f.checked_at:%Y-%m-%d %H:%M}{note}"
 
 
-def build_server(tracker: FilingTracker):
+def list_snapshots(snapshots_dir: Path) -> str:
+    """Snapshot files with their status — snapshots/ is git-ignored, so Glob/Grep skip it."""
+    lines = []
+    for path in sorted(snapshots_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            status = f"status={data.get('status', '?')}, last_completed_step={data.get('last_completed_step', '?')}"
+        except (OSError, ValueError, AttributeError):
+            status = "unreadable"
+        lines.append(f"snapshots/{path.name}: {status}")
+    return "\n".join(lines) or "No snapshot files."
+
+
+def build_server(tracker: FilingTracker, snapshots_dir: Path):
     """The tracker as an in-process MCP server for the Claude Code session."""
 
     async def record(args: dict) -> dict:
@@ -164,6 +178,9 @@ def build_server(tracker: FilingTracker):
     async def show(args: dict) -> dict:
         filings = tracker.all()
         return _text("\n".join(_describe(f) for f in filings) or "Nothing recorded yet.")
+
+    async def snapshots(args: dict) -> dict:
+        return _text(list_snapshots(snapshots_dir))
 
     year = {"type": "integer", "description": "Tax year N (1 July N-1 to 30 June N), e.g. 2027"}
     tools = [
@@ -193,6 +210,13 @@ def build_server(tracker: FilingTracker):
             description="Every tax year's recorded filing status and when it was last checked in IRIS.",
             input_schema={"type": "object", "properties": {}},
             handler=show,
+        ),
+        SdkMcpTool(
+            name="list_snapshots",
+            description=("The skill's snapshot files (snapshots/<year>.json, <year>.draft.json) with their "
+                         "status. Use this instead of Glob: snapshots/ is git-ignored and hidden from search."),
+            input_schema={"type": "object", "properties": {}},
+            handler=snapshots,
         ),
     ]
     return create_sdk_mcp_server(SERVER_NAME, tools=tools)

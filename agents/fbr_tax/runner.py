@@ -136,7 +136,7 @@ class FilingRunner:
             resume=resume,
             skills=[SKILL, "claude-in-chrome"],
             tools=_BUILTIN_TOOLS,             # no Bash, no web fetch/search
-            mcp_servers={TRACKER: build_server(self._tracker)},
+            mcp_servers={TRACKER: build_server(self._tracker, self._project_dir / "snapshots")},
             allowed_tools=_ALLOWED_TOOLS,
             permission_mode="dontAsk",        # anything not allowed above is denied
             setting_sources=["project"],      # the filing project's skill; not the user's hooks/plugins

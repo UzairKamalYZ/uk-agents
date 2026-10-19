@@ -156,7 +156,6 @@ Optional hooks for agents that keep a "pending item awaiting yes/no" (the normal
 - Only one turn runs at a time (one browser); a second message gets `BUSY`.
 - **Filing tracker** (`tracker.py`, `filings.db` in `FBR_TAX_DATA_DIR`): the agent's own record of each tax year (`submitted` / `draft_saved` / `not_started`, draft count, when it was checked in IRIS). It is given to the session as the in-process MCP server `fbr_tracker`. `FilingTracker.decide(N)` holds the rules: N submitted → stop; N-1 not submitted → ask; a draft exists → ask "continue or fresh?"; otherwise create the draft. A non-submitted record older than 12 h means "check IRIS again".
 - It never goes past Save Draft. It may click Submit only when the user's own latest message says so, and the e-filing PIN is always typed by the user (`prompts/System_Prompt.txt` adds this on top of the skill's hard rules).
-- `owner_only: true`: needs `TELEGRAM_OWNER_ID` in `.env`.
 - Replies (amounts) pass through the orchestrator, so they reach Telegram, `sessions.db` and LangSmith traces. The tax snapshots themselves stay in `FBR_TAX_DIR`.
 
 ### Clients (`clients/`)
@@ -194,11 +193,11 @@ All settings live in `.env` at the project root. `core/src/config/config.py` loa
 | `NORMALISER_PROMPT_FILE` / `SUPERVISOR_PROMPT_FILE` / `SYNTHESISER_PROMPT_FILE` | `orchestrator/prompts/*.txt` | Orchestrator prompts |
 | `AGENTS_FILE` / `MCP_FILE` | `agents.json` / `mcp.json` | Registries (resolved from the project root) |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | From @BotFather |
-| `TELEGRAM_OWNER_ID` | _(empty)_ | Owner's Telegram user id; agents marked `"owner_only": true` (`fbr_tax_filing`) refuse everyone while it is empty |
+| `TELEGRAM_OWNER_ID` | _(empty)_ | Owner's Telegram user id; only matters for agents marked `"owner_only": true` (none today) |
 | `WHISPER_MODEL` | `small` | faster-whisper size: `tiny` / `base` / `small` / `medium` / `large-v3` |
 | `EXPENSES_DIR` | _(per-user data dir)_ | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `%APPDATA%\uk-agents\expenses` (Windows). Relative paths resolve from the project root |
 | `FBR_TAX_DIR` / `FBR_TAX_MAX_TURNS` | `~/work/fbr-tax-filing` / `200` | FBR filing project (holds the skill and `snapshots/`); max tool calls per filing step |
-| `FBR_TAX_DATA_DIR` | _(per-user data dir)/fbr_tax_ | The FBR agent's `filings.db` (status of each tax year) |
+| `FBR_TAX_DATA_DIR` | _(per-user data dir)/fbr_tax_ | The FBR agent's `filings.db` (status of each tax year); its tracker server also lists `snapshots/` (git-ignored, so hidden from Glob) |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `API_KEY` | _(empty — auth off)_ | REST `X-API-Key` |
 | `MAX_HISTORY_TURNS` | `10` | Turns of chat history sent to the LLM per agent and session |
@@ -279,6 +278,6 @@ Create `clients/<name>/main.py` and `__init__.py`, implement `BaseClient`, call 
   - `ANTHROPIC_API=false` uses `ChatClaudeCode`, which runs the local `claude` CLI through the Agent SDK. Bound tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`. Built-in Claude Code tools and user settings are disabled.
   - `core/tests/model/test_llm_factory.py` fails when `core/tests` runs alone with `ANTHROPIC_API=false` in `.env`. It passes in the full suite.
 - **Chat history is persistent.** `BaseAgent` gives each `LlmModelGraph` a `SessionManager(Config.SESSION_DB_FILE)`, so history is kept per (agent class name, session_id) in `sessions.db` and survives restarts. Only the last `MAX_HISTORY_TURNS` turns go to the LLM. An `LlmModelGraph` built without `history_store` (as in tests) keeps history in memory. Expenses live separately in `expenses.db`; mail state in `MAIL_SEEN_DB`.
-- **Owner lock.** `owner_only` exists in `agents.json` (agent refusal plus pending isolation) and in `mcp.json` (tool scoping). Only `fbr_tax_filing` uses it: it controls a browser logged in to the tax portal. The expense tools are not in `mcp.json` at all; only `ExpenditureAgent` binds them, so other agents can never write the ledger.
+- **Owner lock.** `owner_only` exists in `agents.json` (agent refusal plus pending isolation) and in `mcp.json` (tool scoping). Nothing uses it today: there is a single user, so every agent answers every chat. The expense tools are not in `mcp.json` at all; only `ExpenditureAgent` binds them, so other agents can never write the ledger.
 - **Never log secrets.** Telegram URLs contain the bot token. Keep `httpx` at WARNING in `logging_config.py`.
 - **Pinecone required for RAG agents.** `property_agent` and `whatsapp_agent` need `PINECONE_API_KEY` and network access at startup.
