@@ -21,11 +21,13 @@ out so only the final synthesis reaches the caller.
 from __future__ import annotations
 
 import logging
-from typing import Generator
+from typing import Callable, Generator
 
 from langsmith import traceable
 
+from .agent_registry import AgentEntry
 from .graph import MultiAgentGraph
+from .tracing import tag_current_trace
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,9 @@ class OrchestratorAgent:
         prompt: str,
         stream: bool = False,
         session_id: str = "default",
+        *,
+        is_owner: bool = False,
+        on_route: Callable[[AgentEntry], None] | None = None,
     ) -> str | Generator[str, None, None]:
         """
         Ask the multi-agent pipeline a question.
@@ -75,6 +80,11 @@ class OrchestratorAgent:
                      if False (default), blocks until the full answer is ready
         session_id : passed through to each agent so per-session history is
                      maintained correctly across turns
+        is_owner   : True when the caller is the bot's owner; agents marked
+                     "owner_only" in agents.json refuse non-owner requests
+        on_route   : blocking path only — called with each agent's AgentEntry as
+                     soon as it is picked, before it runs (e.g. to show
+                     "Expenditure Tracker is working on it…")
 
         Returns
         -------
@@ -83,12 +93,23 @@ class OrchestratorAgent:
         """
         if stream:
             # Return a generator — the caller iterates it to receive chunks
-            return self._stream_tokens(prompt, session_id)
+            return self._stream_tokens(prompt, session_id, is_owner)
 
-        # Blocking path — run the full graph and return the final string
-        return self._graph.ask(prompt, session_id=session_id)
+        # Blocking path — run the full graph and return the final string.
+        # Each picked agent is also tagged onto this request's LangSmith trace.
+        routed: list[str] = []
 
-    def _stream_tokens(self, prompt: str, session_id: str) -> Generator[str, None, None]:
+        def _on_route(entry: AgentEntry) -> None:
+            routed.append(entry.name)
+            tag_current_trace([f"agent:{entry.name}"], {"agents": list(routed)})
+            if on_route is not None:
+                on_route(entry)
+
+        return self._graph.ask(prompt, session_id=session_id, is_owner=is_owner, on_route=_on_route)
+
+    def _stream_tokens(
+        self, prompt: str, session_id: str, is_owner: bool = False
+    ) -> Generator[str, None, None]:
         """
         Yield real tokens from the synthesiser LLM as they are generated.
 
@@ -101,7 +122,7 @@ class OrchestratorAgent:
         The caller (REST SSE endpoint, Telegram live-edit) receives chunks
         immediately as the LLM writes them, not after the whole pipeline finishes.
         """
-        yield from self._graph.stream_tokens(prompt, session_id=session_id)
+        yield from self._graph.stream_tokens(prompt, session_id=session_id, is_owner=is_owner)
 
     def close(self) -> None:
         """No persistent resources to release — graph is stateless between calls."""

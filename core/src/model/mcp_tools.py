@@ -13,12 +13,18 @@ by appending an entry — no code changes required:
       ]
     }
 
+``"{python}"`` in a command is replaced by the running interpreter, and such a
+server is launched from the project root so ``-m package.module`` resolves.
+``"owner_only": true`` keeps a server out of the default tool set
+(``langchain_tools()`` with no ``server_name``); request it by name instead.
+
 The registry is built automatically at import time from that file.
 """
 
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 from ..config.config import Config
@@ -27,6 +33,7 @@ from .mcp_registry import MCPRegistry
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(Config.MCP_FILE)
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _load_registry(config_path: Path) -> MCPRegistry:
@@ -46,10 +53,14 @@ def _load_registry(config_path: Path) -> MCPRegistry:
         name = entry.get("name")
         command = entry.get("command")
         url = entry.get("url")
+        owner_only = bool(entry.get("owner_only", False))
 
         if name and command:
+            # A {python} module only resolves when launched from the project root.
+            cwd = str(_PROJECT_ROOT) if "{python}" in command else None
+            command = [sys.executable if part == "{python}" else part for part in command]
             logger.info("mcp-tools: adding stdio server '%s'", name)
-            registry.register(name, command)
+            registry.register(name, command, cwd=cwd, owner_only=owner_only)
 
         elif name and url:
             # Build query params: resolve any api_key_env reference from environment
@@ -66,7 +77,7 @@ def _load_registry(config_path: Path) -> MCPRegistry:
                         api_key_env, name,
                     )
             logger.info("mcp-tools: adding HTTP server '%s' → %s", name, url)
-            registry.register_http(name, url, params=params)
+            registry.register_http(name, url, params=params, owner_only=owner_only)
 
         else:
             logger.warning("mcp-tools: skipping invalid entry %s", entry)

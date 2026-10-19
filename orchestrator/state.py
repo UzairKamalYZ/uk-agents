@@ -43,8 +43,9 @@ class GraphState(TypedDict):
     Fields
     ------
     user_input : str
-        The raw question submitted by the user.  Set once at graph entry;
-        never modified after that.
+        The user's question as the supervisor and agents see it.  Set to the
+        raw message at graph entry, then replaced by the normaliser's cleaned
+        text (or, on a pending correction, the text plus the pending summary).
 
     session_id : str
         Identifies the conversation so per-agent session history is kept
@@ -69,6 +70,26 @@ class GraphState(TypedDict):
         Running count of agent-node invocations this turn.
         Incremented by every agent node.  Checked by the router to enforce
         the MAX_AGENT_TURNS cap.
+
+    is_owner : bool
+        True when the caller is the bot's owner.  Agents flagged
+        "owner_only" in agents.json refuse to run when this is False.
+
+    raw_input : str
+        The user's message exactly as received, before any normalisation.
+
+    direct : bool
+        True when a pre-supervisor step has already decided the routing
+        (bypassing the supervisor LLM).  False at graph entry.
+
+    history : str
+        The session's last few user/assistant turns ("user: …" / "<agent>: …"
+        lines, oldest first; "" for a new conversation).  Shown to the
+        normaliser and supervisor so follow-ups keep their context.
+
+    request_id : str
+        Short id for this user turn.  Written into routing log lines and the
+        LangSmith trace metadata so logs and traces can be matched up.
     """
 
     user_input: str
@@ -77,3 +98,8 @@ class GraphState(TypedDict):
     agent_outputs: dict[str, str]
     next: str
     turns: int
+    is_owner: bool
+    raw_input: str
+    direct: bool
+    request_id: str
+    history: str

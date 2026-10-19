@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -6,6 +7,18 @@ _PROJECT_ROOT = Path(__file__).parents[3]
 
 # Always load from the project root .env, regardless of where the process is launched
 load_dotenv(_PROJECT_ROOT / ".env")
+
+
+def _user_data_dir() -> Path:
+    """Per-user data directory for uk-agents, outside the project (survives re-clones)."""
+    if os.name == "nt":
+        base = Path(os.getenv("APPDATA", Path.home() / "AppData" / "Roaming"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "uk-agents"
+
 
 class Config:
     """Configuration class for the application."""
@@ -20,15 +33,18 @@ class Config:
     ANTHROPIC_API = os.getenv("ANTHROPIC_API", "true").lower() == "true"
     SENTENCE_TRANSFORMER_MODEL = os.getenv("SENTENCE_TRANSFORMER_MODEL")
     MEMORY_FILE = os.getenv("MEMORY_FILE")
-    URLS_FILE = os.getenv("URLS_FILE")
+    URLS_FILE = str(_PROJECT_ROOT / (os.getenv("URLS_FILE") or "agents/property/urls.txt"))
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-    PROMPT_FILE = os.path.join(os.getenv("PROMPT_FILE"))
-    INTERACTION_FILE = os.path.join(os.getenv("INTERACTION_FILE"))
-    REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
+    # Property agent prompt files — defaults point at agents/property/prompts/, resolved from the project root
+    PROMPT_FILE = str(_PROJECT_ROOT / (os.getenv("PROMPT_FILE") or "agents/property/prompts/System_Prompt.txt"))
+    INTERACTION_FILE = str(_PROJECT_ROOT / (os.getenv("INTERACTION_FILE") or "agents/property/prompts/interaction.json"))
+    REFORMULATION_PROMPT = str(_PROJECT_ROOT / (os.getenv("REFORMULATION_PROMPT") or "agents/property/prompts/reformulated_prompt.txt"))
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    # Telegram user id of the owner; only they can use the expense tracker
+    TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_ID", "")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "uk-agents")
@@ -36,7 +52,9 @@ class Config:
     API_KEY = os.getenv("API_KEY", "")
 
     # SQLite file for persistent session history
-    SESSION_DB_FILE = os.getenv("SESSION_DB_FILE", "sessions.db")
+    SESSION_DB_FILE = str(_PROJECT_ROOT / (os.getenv("SESSION_DB_FILE") or "sessions.db"))
+    # Prompt the scheduled cron client sends on every run
+    CRON_SEARCH_PROMPT = os.getenv("CRON_SEARCH_PROMPT", "Find 2-bedroom apartments in Poland under 1000")
     # Selenium scraping browser connection string
     SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")
     # Number of listings to retrieve per RAG search
@@ -45,8 +63,14 @@ class Config:
     # Orchestrator prompt files
     SUPERVISOR_PROMPT_FILE = os.getenv("SUPERVISOR_PROMPT_FILE", "orchestrator/prompts/supervisor.txt")
     SYNTHESISER_PROMPT_FILE = os.getenv("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
+    NORMALISER_PROMPT_FILE = os.getenv("NORMALISER_PROMPT_FILE", "orchestrator/prompts/normaliser.txt")
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
+    # Expense ledger + input log — kept outside the project in the user data dir;
+    # a relative EXPENSES_DIR is resolved from the project root, "~" is expanded
+    EXPENSES_DIR = str(_PROJECT_ROOT / Path(os.getenv("EXPENSES_DIR") or _user_data_dir() / "expenses").expanduser())
+    # Local faster-whisper model size for voice transcription
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))
 
     # ---------------------------------------------------------------------------

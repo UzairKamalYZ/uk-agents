@@ -69,6 +69,11 @@ class TestBaseAgent(unittest.TestCase):
     def test_should_create_llm_with_config_values(self):
         self.mock_create_llm.assert_called_once()
 
+    def test_should_give_llm_model_graph_a_persistent_history_store(self):
+        from core.src.model.session_manager import SessionManager
+        store = self.mock_graph_cls.call_args.kwargs["history_store"]
+        self.assertIsInstance(store, SessionManager)
+
     def test_should_pass_system_prompt_to_llm_model_graph(self):
         _, kwargs = self.mock_graph_cls.call_args
         self.assertEqual(kwargs["system_prompt"], _FAKE_PROMPT)
@@ -151,3 +156,13 @@ class TestBaseAgent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPendingHooksDefault(unittest.TestCase):
+
+    def test_pending_hooks_default_noop(self):
+        with patch("core.src.base_agent.create_llm"), patch("core.src.base_agent.LlmModelGraph"):
+            agent = _MinimalAgent(session_id="s")
+        self.assertIsNone(agent.pending_summary("s"))
+        self.assertEqual(agent.confirm_pending("s"), "")
+        self.assertIsNone(agent.discard_pending("s"))

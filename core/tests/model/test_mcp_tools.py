@@ -220,3 +220,91 @@ class TestMCPRegistry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_python_placeholder_resolves_to_sys_executable():
+    import sys
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Path(d) / "mcp.json"
+        cfg.write_text(json.dumps({"servers": [{"name": "x", "command": ["{python}", "-m", "x"]}]}))
+        registry = _load_registry(cfg)
+    assert registry._servers["x"]._command == [sys.executable, "-m", "x"]
+
+
+def test_langchain_tools_unknown_server_returns_empty():
+    registry = MCPRegistry()
+    server = MagicMock()
+    server.list_tools.return_value = [{"name": "t"}]
+    registry._servers["a"] = server
+    assert registry.langchain_tools(server_name="missing") == []
+    server.list_tools.assert_not_called()
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_python_placeholder_runs_from_project_root():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Path(d) / "mcp.json"
+        cfg.write_text(json.dumps({"servers": [
+            {"name": "py", "command": ["{python}", "-m", "x"]},
+            {"name": "npx", "command": ["npx", "y"]},
+        ]}))
+        registry = _load_registry(cfg)
+    assert registry._servers["py"]._cwd == str(_PROJECT_ROOT)
+    assert registry._servers["npx"]._cwd is None
+
+
+@patch("core.src.model.mcp_registry.subprocess.Popen")
+def test_process_launches_with_cwd(mock_popen):
+    mock_popen.return_value.stdout.readline.return_value = "{}"
+    MCPProcess("x", ["cmd"], cwd="/some/dir")._ensure_running()
+    assert mock_popen.call_args.kwargs["cwd"] == "/some/dir"
+    MCPProcess("y", ["cmd"])._ensure_running()
+    assert mock_popen.call_args.kwargs["cwd"] is None
+
+
+def _registry_with(owner_only_name: str) -> tuple[MCPRegistry, MagicMock, MagicMock]:
+    registry = MCPRegistry()
+    public, private = MagicMock(), MagicMock()
+    public.list_tools.return_value = [{"name": "pub_tool"}]
+    private.list_tools.return_value = [{"name": "priv_tool"}]
+    with patch("core.src.model.mcp_registry.MCPProcess", side_effect=[public, private]):
+        registry.register("public", ["a"])
+        registry.register(owner_only_name, ["b"], owner_only=True)
+    return registry, public, private
+
+
+def test_default_tool_set_excludes_owner_only_servers():
+    registry, _public, private = _registry_with("expenses")
+    assert [t.name for t in registry.langchain_tools()] == ["pub_tool"]
+    private.list_tools.assert_not_called()
+
+
+def test_owner_only_server_still_available_by_name():
+    registry, _public, _private = _registry_with("expenses")
+    assert [t.name for t in registry.langchain_tools(server_name="expenses")] == ["priv_tool"]
+
+
+def test_mcp_json_owner_only_flag_is_recorded():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        cfg = Path(d) / "mcp.json"
+        cfg.write_text(json.dumps({"servers": [
+            {"name": "a", "command": ["npx", "a"]},
+            {"name": "b", "command": ["npx", "b"], "owner_only": True},
+        ]}))
+        registry = _load_registry(cfg)
+    assert registry.is_owner_only("b") and not registry.is_owner_only("a")
+
+
+def test_optional_anyof_param_keeps_its_type():
+    from core.src.model.mcp_registry import _build_args_model
+    model = _build_args_model("t", {
+        "properties": {"amount": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": None}},
+        "required": [],
+    })
+    assert model.model_fields["amount"].annotation == float | None
+    assert model(amount=19.5).amount == 19.5

@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.src.config.config import Config
@@ -21,6 +21,13 @@ class AgentEntry:
     instance: object   # live BaseAgent-compatible object (must have .ask())
     llm_provider: str  # provider used by this agent (e.g. "anthropic")
     llm_model: str     # model name used by this agent (e.g. "claude-opus-5-5")
+    owner_only: bool = False  # True → only the bot owner may use this agent
+    display_name: str = ""    # shown to users, e.g. "Expenditure Tracker" (defaults to a title-cased name)
+    remarks: tuple[str, ...] = field(default_factory=tuple)  # one-liners shown while the agent works
+
+    @property
+    def label(self) -> str:
+        return self.display_name or self.name.replace("_", " ").title()
 
 
 def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
@@ -72,6 +79,9 @@ def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
             instance=instance,
             llm_provider=llm_provider,
             llm_model=llm_model,
+            owner_only=spec.get("owner_only", False),
+            display_name=spec.get("display_name", ""),
+            remarks=tuple(spec.get("remarks", ())),
         ))
 
     return entries

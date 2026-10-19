@@ -8,6 +8,13 @@ venv/
 # Logs
 logs/
 
+.kiro
+.superpowers
+.playwright-mcp
+.idea
+agentP/.agents/
+
+
 # Python
 __pycache__/
 *.pyc
@@ -25,3 +32,11 @@ package-lock.json
 .idea/
 /package-lock.json
 node_modules/
+# Expense ledger data
+expenses/
+/.claude/
+/agentP/.agents/
+/agentP/skills-lock.json
+
+# Chat history (core/src/model/session_manager.py)
+sessions.db*

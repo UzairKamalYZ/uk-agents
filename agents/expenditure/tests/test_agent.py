@@ -1,0 +1,85 @@
+import sqlite3
+from datetime import date
+from decimal import Decimal
+from unittest.mock import patch
+
+import pytest
+
+from agents.expenditure.agent import ExpenditureAgent
+from agents.expenditure.ledger import Expense, ExpenseLedger
+
+
+@pytest.fixture
+def agent(tmp_path):
+    with patch("core.src.base_agent.create_llm"), \
+         patch("core.src.base_agent.LlmModelGraph"), \
+         patch("agents.expenditure.agent.Config") as cfg:
+        cfg.EXPENSES_DIR = str(tmp_path)
+        a = ExpenditureAgent(session_id="s")
+        a._today = lambda: date(2026, 10, 18)
+        yield a
+
+
+def _pending(tmp_path, amount="19"):
+    ExpenseLedger(tmp_path).set_pending(
+        Expense(date(2026, 10, 18), "Colruyt", None if amount is None else Decimal(amount)), "amount unclear"
+    )
+
+
+def test_confirm_pending_logs_and_returns_totals(agent, tmp_path):
+    _pending(tmp_path)
+    reply = agent.confirm_pending("s")
+    assert reply.startswith("✅ Expense saved\n📍 Colruyt\n💶 €19.00")
+    assert ExpenseLedger(tmp_path).expenses() == [Expense(date(2026, 10, 18), "Colruyt", Decimal("19.00"))]
+
+
+def test_confirm_without_pending(agent):
+    assert agent.confirm_pending("s") == "ℹ️ Nothing to confirm.\n\n— Expenditure Tracker"
+
+
+def test_pending_summary_and_discard(agent, tmp_path):
+    assert agent.pending_summary("s") is None
+    _pending(tmp_path)
+    assert agent.pending_summary("s") == "Colruyt, €19.00, 2026-10-18 (problem: amount unclear)"
+    agent.discard_pending("s")
+    assert agent.pending_summary("s") is None
+
+
+def test_uses_in_process_expense_tools(agent):
+    names = {t.name for t in agent.get_mcp_tools()}
+    assert {"add_expense", "propose_expense", "undo_last_expense", "get_expense_summary"} <= names
+
+
+def test_pending_summary_with_unknown_amount(agent, tmp_path):
+    _pending(tmp_path, amount=None)
+    assert agent.pending_summary("s") == "Colruyt, amount unknown, 2026-10-18 (problem: amount unclear)"
+
+
+def test_confirm_with_unknown_amount_keeps_pending_and_saves_nothing(agent, tmp_path):
+    _pending(tmp_path, amount=None)
+    assert agent.confirm_pending("s").startswith("⚠️ I still need the amount\n📍 Colruyt\n📅 Sun 18 Oct 2026")
+    assert ExpenseLedger(tmp_path).expenses() == []
+    assert agent.pending_summary("s") is not None
+
+
+def test_ask_prefixes_today(agent):
+    agent.model.ask.return_value = "ok"
+    assert agent.ask("Colruyt 90", session_id="x") == "ok"
+    agent.model.ask.assert_called_once_with("Today is 2026-10-18 (Sunday).\n\nColruyt 90", session_id="x")
+
+
+def test_every_input_is_logged(agent, tmp_path):
+    agent.model.ask.return_value = "ok"
+    agent.ask("Colruyt 90", session_id="x")
+    _pending(tmp_path)
+    agent.confirm_pending("s")
+    _pending(tmp_path)
+    agent.discard_pending("s")
+    entries = [text for _, text in ExpenseLedger(tmp_path).inputs()]
+    assert entries == ["Colruyt 90", "[confirmed pending expense]", "[discarded pending expense]"]
+
+
+def test_input_log_failure_does_not_block_reply(agent):
+    agent.model.ask.return_value = "ok"
+    with patch.object(agent._ledger, "log_input", side_effect=sqlite3.OperationalError("database is locked")):
+        assert agent.ask("Colruyt 90") == "ok"
