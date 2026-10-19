@@ -13,8 +13,7 @@ from agents.expenditure.ledger import Expense, ExpenseLedger
 def agent(tmp_path):
     with patch("core.src.base_agent.create_llm"), \
          patch("core.src.base_agent.LlmModelGraph"), \
-         patch("agents.expenditure.agent.Config") as cfg, \
-         patch("agents.expenditure.agent._mcp"):
+         patch("agents.expenditure.agent.Config") as cfg:
         cfg.EXPENSES_DIR = str(tmp_path)
         a = ExpenditureAgent(session_id="s")
         a._today = lambda: date(2026, 10, 18)
@@ -46,10 +45,9 @@ def test_pending_summary_and_discard(agent, tmp_path):
     assert agent.pending_summary("s") is None
 
 
-def test_uses_expenses_mcp_server(agent):
-    with patch("agents.expenditure.agent._mcp") as mcp:
-        agent.get_mcp_tools()
-    mcp.langchain_tools.assert_called_once_with(server_name="expenses")
+def test_uses_in_process_expense_tools(agent):
+    names = {t.name for t in agent.get_mcp_tools()}
+    assert {"add_expense", "propose_expense", "undo_last_expense", "get_expense_summary"} <= names
 
 
 def test_pending_summary_with_unknown_amount(agent, tmp_path):
@@ -85,18 +83,3 @@ def test_input_log_failure_does_not_block_reply(agent):
     agent.model.ask.return_value = "ok"
     with patch.object(agent._ledger, "log_input", side_effect=sqlite3.OperationalError("database is locked")):
         assert agent.ask("Colruyt 90") == "ok"
-
-
-def test_ask_without_tools_refuses_without_calling_model(tmp_path, caplog):
-    with patch("core.src.base_agent.create_llm"), \
-         patch("core.src.base_agent.LlmModelGraph"), \
-         patch("agents.expenditure.agent.Config") as cfg, \
-         patch("agents.expenditure.agent._mcp") as mcp:
-        cfg.EXPENSES_DIR = str(tmp_path)
-        mcp.langchain_tools.return_value = []
-        with caplog.at_level("ERROR"):
-            a = ExpenditureAgent(session_id="s")
-    assert "expenses" in caplog.text
-    assert a.ask("Colruyt 90").startswith("⚠️ Expense tracking is unavailable right now — nothing was saved.")
-    a.model.ask.assert_not_called()
-    assert [text for _, text in ExpenseLedger(tmp_path).inputs()] == ["Colruyt 90"]

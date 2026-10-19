@@ -53,8 +53,8 @@ class Expense:
 class ExpenseLedger:
     """SQLite-backed expense store: every expense, every received input, and one pending slot.
 
-    Shared by the bot process and the expenses MCP subprocess, so each operation opens its own
-    short-lived connection; WAL mode plus a busy timeout lets both write safely.
+    Each operation opens its own short-lived connection (WAL mode plus a busy timeout), so
+    several processes — e.g. the bot and a REST client — can safely share one database.
     """
 
     def __init__(self, root: Path) -> None:

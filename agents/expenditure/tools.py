@@ -1,11 +1,11 @@
-"""Local stdio MCP server exposing the expense ledger as tools."""
+"""The expense ledger as LangChain tools, called in-process by ExpenditureAgent."""
 
 import logging
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from mcp.server.mcpserver import MCPServer
+from langchain_core.tools import BaseTool, StructuredTool
 
 from core.src.config.config import Config
 
@@ -21,8 +21,6 @@ from .replies import (
 )
 
 logger = logging.getLogger(__name__)
-
-server = MCPServer("expenses")
 
 
 def _today() -> date:
@@ -164,41 +162,42 @@ def _call(tool: str, fn, *args) -> str:
     return reply
 
 
-# Thin wrappers keep the `ledger` kwarg out of the tool schemas.
-@server.tool(name="add_expense", description=add_expense.__doc__)
+# Thin wrappers keep the `ledger` kwarg out of the tool schemas Claude sees.
 def _add_expense(place: str, amount: float, date: str | None = None) -> str:
     return _call("add_expense", add_expense, place, amount, date)
 
 
-@server.tool(name="propose_expense", description=propose_expense.__doc__)
 def _propose_expense(place: str, problem: str, amount: float | None = None, date: str | None = None) -> str:
     return _call("propose_expense", propose_expense, place, problem, amount, date)
 
 
-@server.tool(name="undo_last_expense", description=undo_last_expense.__doc__)
 def _undo_last_expense() -> str:
     return _call("undo_last_expense", undo_last_expense)
 
 
-@server.tool(name="get_expense_totals", description=get_expense_totals.__doc__)
 def _get_expense_totals() -> str:
     return _call("get_expense_totals", get_expense_totals)
 
 
-@server.tool(name="get_expense_summary", description=get_expense_summary.__doc__)
 def _get_expense_summary() -> str:
     return _call("get_expense_summary", get_expense_summary)
 
 
-@server.tool(name="get_expense_breakdown", description=get_expense_breakdown.__doc__)
 def _get_expense_breakdown(month: str | None = None) -> str:
     return _call("get_expense_breakdown", get_expense_breakdown, month)
 
 
-if __name__ == "__main__":
-    from logging_config import setup_logging
+_TOOLS = (
+    ("add_expense", _add_expense, add_expense),
+    ("propose_expense", _propose_expense, propose_expense),
+    ("undo_last_expense", _undo_last_expense, undo_last_expense),
+    ("get_expense_totals", _get_expense_totals, get_expense_totals),
+    ("get_expense_summary", _get_expense_summary, get_expense_summary),
+    ("get_expense_breakdown", _get_expense_breakdown, get_expense_breakdown),
+)
 
-    # stdout carries the MCP protocol, so this subprocess logs to its own file only.
-    setup_logging(console=False, log_file="mcp-expenses.log")
-    logger.info("expenses MCP server starting (EXPENSES_DIR=%s)", Config.EXPENSES_DIR)
-    server.run()
+
+def build_tools() -> list[BaseTool]:
+    """The expense tools for ExpenditureAgent; each tool's description is its function's docstring."""
+    return [StructuredTool.from_function(func=wrapper, name=name, description=impl.__doc__)
+            for name, wrapper, impl in _TOOLS]

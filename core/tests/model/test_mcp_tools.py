@@ -300,11 +300,6 @@ def test_mcp_json_owner_only_flag_is_recorded():
     assert registry.is_owner_only("b") and not registry.is_owner_only("a")
 
 
-def test_real_mcp_json_marks_expenses_owner_only():
-    assert _mcp.is_owner_only("expenses")
-    assert not _mcp.is_owner_only("finance")
-
-
 def test_optional_anyof_param_keeps_its_type():
     from core.src.model.mcp_registry import _build_args_model
     model = _build_args_model("t", {

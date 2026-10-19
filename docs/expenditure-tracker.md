@@ -26,7 +26,7 @@ OrchestratorAgent.ask(..., on_route=…)
   ├─ normaliser   cleans text: "aldi ten" → "Aldi €10 2026-10-19"; resolves yes/no on a pending item
   ├─ supervisor   picks expenditure_tracker  → on_route → "🤖 Expenditure Tracker is working on your query…"
   ├─ expenditure_tracker
-  │     ExpenditureAgent.ask prefixes "Today is …", Claude picks ONE tool on the expenses MCP server
+  │     ExpenditureAgent.ask prefixes "Today is …", Claude picks ONE of the agent's in-process tools
   │     and returns the tool's text verbatim
   └─ synthesiser  single agent → passthrough (the reply is already formatted)
   ▼
@@ -83,7 +83,7 @@ project, so restarts, `git clean` and redeploys don't touch it.
 | `pending` | at most one row: the expense awaiting "yes" and its problem | Single user, so one slot. |
 | `monthly_totals` (view) | month, entries, total_eur | Per-month record for browsing (`sqlite3 expenses.db 'select * from monthly_totals'`). |
 
-The bot process and the MCP subprocess both use the database. Each operation opens a
+Each operation opens a
 short-lived connection, with WAL mode and a 10 s busy timeout.
 
 ## 5. Components
@@ -92,10 +92,9 @@ short-lived connection, with WAL mode and a 10 s busy timeout.
 |---|---|
 | `agents/expenditure/ledger.py` | `ExpenseLedger`: all SQL; the only code that touches the database |
 | `agents/expenditure/replies.py` | All user-facing text |
-| `agents/expenditure/mcp_server.py` | Local stdio MCP server `expenses`. Validates input (positive amounts, ISO dates) and logs every tool call |
+| `agents/expenditure/tools.py` | `build_tools()`: the six LangChain tools, run in-process. Validates input (positive amounts, ISO dates) and logs every tool call. Each tool's description is its function's docstring |
 | `agents/expenditure/agent.py` | `ExpenditureAgent`: date prefix, pending hooks for the normaliser, refuses with "unavailable" if the tools didn't load |
 | `agents/expenditure/prompts/System_Prompt.txt` | Which tool for which intent; reply-verbatim rule |
-| `mcp.json` → `expenses` (`owner_only: true`) | Keeps the ledger-writing tools out of every other agent's default tool set |
 | `agents.json` → `expenditure_tracker` | Routing description, display name, waiting remarks |
 
 ## 6. Operations
@@ -104,7 +103,7 @@ short-lived connection, with WAL mode and a 10 s busy timeout.
 |---|---|
 | Data | `$EXPENSES_DIR/expenses.db` |
 | Bot / orchestrator log | `logs/agent.log` (rotating, 5 × 5 MB) |
-| Tool-call log | `logs/mcp-expenses.log`: every tool call, its arguments and the first line of its reply |
+| Tool-call log | `logs/agent.log` (logger `agents.expenditure.tools`): every tool call, its arguments and the first line of its reply |
 | Traces | LangSmith project `LANGCHAIN_PROJECT`, tag `agent:expenditure_tracker` |
 | Backup | Copy `expenses.db` (and `-wal` / `-shm` files if the bot is running), or `sqlite3 expenses.db ".backup backup.db"` |
 

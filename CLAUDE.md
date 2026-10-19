@@ -50,7 +50,7 @@ uk-agents/
 │   ├── finance/                # stocks (Yahoo Finance MCP)
 │   ├── whatsapp/               # WhatsApp agent + standalone group listener
 │   ├── mails/                  # mail agent + standalone IMAP monitor
-│   └── expenditure/            # expense tracker: SQLite ledger + local `expenses` MCP server
+│   └── expenditure/            # expense tracker: SQLite ledger + in-process tools
 │       └── (each agent: agent.py, prompts/System_Prompt.txt, optional tests/, main.py)
 ├── clients/
 │   ├── base.py                 # BaseClient ABC (start / stop / context manager)
@@ -60,7 +60,7 @@ uk-agents/
 │   ├── cron/main.py            # Scheduled prompt every 30 min
 │   └── tests/
 ├── docs/                       # Design docs (docs/superpowers/ = specs and plans)
-└── logs/                       # agent.log, mcp-expenses.log (git-ignored)
+└── logs/                       # agent.log (git-ignored)
 ```
 
 `agentP/` is a leftover from before the `core/` + `agents/` split, and only an empty test package remains. Don't add code there.
@@ -132,7 +132,7 @@ Optional hooks for agents that keep a "pending item awaiting yes/no" (the normal
   - `inputs`: every message received;
   - `pending`: one slot;
   - `monthly_totals`: a view.
-- **Code layout.** `ExpenseLedger` holds all the SQL. `replies.py` holds all the user-facing text. `mcp_server.py` is a local stdio MCP server named `expenses`. Its tools are `add_expense`, `propose_expense`, `undo_last_expense`, `get_expense_totals`, `get_expense_summary` and `get_expense_breakdown`.
+- **Code layout.** `ExpenseLedger` holds all the SQL. `replies.py` holds all the user-facing text. `tools.py` builds plain LangChain tools that run in-process and are bound only to this agent (no MCP, no subprocess). The tools are `add_expense`, `propose_expense`, `undo_last_expense`, `get_expense_totals`, `get_expense_summary` and `get_expense_breakdown`.
 - **The agent.** `ExpenditureAgent.ask` puts `Today is …` in front of the prompt. If the tools didn't load, it refuses instead of letting Claude make up a save.
 - **Rules.** Totals are always computed in SQL or Python, and Claude returns the tool's text word for word.
 - Full design and roadmap: `docs/expenditure-tracker.md`.
@@ -147,7 +147,7 @@ All clients implement `BaseClient` (`start()` blocks; `stop()`; context manager)
 
 `setup_logging(console=True, log_file="agent.log")` writes `logs/agent.log`, anchored at the project root (rotating, 5 × 5 MB, level from `LOG_LEVEL`). It uses `force=True`, so it wins over libraries that configure logging first.
 
-The chatty loggers are held at WARNING: `httpx` (whose request URLs contain the Telegram bot token), `httpcore`, `telegram.ext`, `mcp` and `anthropic`. The expenses MCP subprocess logs to `logs/mcp-expenses.log` with `console=False`, because its stdout carries the MCP protocol.
+The chatty loggers are held at WARNING: `httpx` (whose request URLs contain the Telegram bot token), `httpcore`, `telegram.ext`, `mcp` and `anthropic`. A process whose stdout carries a protocol (e.g. a stdio MCP server) should call `setup_logging(console=False, log_file="<own>.log")`.
 
 ---
 
@@ -207,7 +207,7 @@ python -m pytest orchestrator/tests -q   # one area
 
 ### Testing rules
 
-- Mock every external dependency: LLM, Pinecone, HTTP, Telegram, Whisper. Never make real network or model calls. Local subprocesses are fine; the expenses MCP smoke test starts the real server against a temporary folder.
+- Mock every external dependency: LLM, Pinecone, HTTP, Telegram, Whisper. Never make real network or model calls. Local subprocesses are fine.
 - Filesystem and database tests use `tmp_path`. Never touch the real `EXPENSES_DIR` or `logs/`.
 - `clients/tests/conftest.py` replaces `core.src.config.config`, `orchestrator.agent_interface` and `telegram` with MagicMocks **for the whole pytest process**. Tests elsewhere that need real config values must patch them locally (see `orchestrator/tests/test_graph.py` `_CONFIG`), or resolve them at call time instead of import time.
 - When adding a new test directory, add it to `testpaths` in `pyproject.toml`.
@@ -255,6 +255,6 @@ Create `clients/<name>/main.py` and `__init__.py`, implement `BaseClient`, call 
   - `ANTHROPIC_API=false` uses `ChatClaudeCode`, which runs the local `claude` CLI through the Agent SDK. Bound tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`. Built-in Claude Code tools and user settings are disabled.
   - `core/tests/model/test_llm_factory.py` fails when `core/tests` runs alone with `ANTHROPIC_API=false` in `.env`. It passes in the full suite.
 - **Chat history is persistent.** `BaseAgent` gives each `LlmModelGraph` a `SessionManager(Config.SESSION_DB_FILE)`, so history is kept per (agent class name, session_id) in `sessions.db` and survives restarts. Only the last `MAX_HISTORY_TURNS` turns go to the LLM. An `LlmModelGraph` built without `history_store` (as in tests) keeps history in memory. Expenses live separately in `expenses.db`; mail state in `MAIL_SEEN_DB`.
-- **Owner lock.** `owner_only` exists in `agents.json` (agent refusal plus pending isolation) and in `mcp.json` (tool scoping). The expense tracker is not owner-only in `agents.json`, but its MCP server is, so other agents can never write the ledger.
+- **Owner lock.** `owner_only` exists in `agents.json` (agent refusal plus pending isolation) and in `mcp.json` (tool scoping). Nothing uses it today. The expense tools are not in `mcp.json` at all; only `ExpenditureAgent` binds them, so other agents can never write the ledger.
 - **Never log secrets.** Telegram URLs contain the bot token. Keep `httpx` at WARNING in `logging_config.py`.
 - **Pinecone required for RAG agents.** `property_agent` and `whatsapp_agent` need `PINECONE_API_KEY` and network access at startup.

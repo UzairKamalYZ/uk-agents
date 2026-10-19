@@ -18,7 +18,7 @@ All agents share the same foundation:
 | `finance_agent` | Stock analysis and investment questions | Yahoo Finance MCP | Orchestrator |
 | `whatsapp_agent` | Short, mobile-friendly property answers | RAG (Pinecone) | Orchestrator |
 | `mail_agent` | Questions about emails, drafting replies | — | Orchestrator |
-| `expenditure_tracker` | Logs spending ("Aldi 10"), undo, monthly totals, top expenses, per-shop breakdown — see [docs/expenditure-tracker.md](docs/expenditure-tracker.md) | SQLite via local `expenses` MCP server | Orchestrator |
+| `expenditure_tracker` | Logs spending ("Aldi 10"), undo, monthly totals, top expenses, per-shop breakdown — see [docs/expenditure-tracker.md](docs/expenditure-tracker.md) | SQLite + in-process tools | Orchestrator |
 | WhatsApp listener | Detects when Uzair is mentioned in a group and auto-replies | Green API | Standalone (`agents.whatsapp.main`) |
 | Mail monitor | Summarises new emails across inboxes and sends a digest | IMAP + Green API | Standalone (`agents.mails.main`) |
 
@@ -786,7 +786,7 @@ Example `MAIL_ACCOUNTS` value:
 | `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | _(empty)_ | LangSmith API key |
 | `LANGCHAIN_PROJECT` | `uk-agents` | LangSmith project name |
-| `LOG_LEVEL` | `INFO` | Level for `logs/agent.log` (rotating, 5 × 5 MB). The expenses MCP server writes `logs/mcp-expenses.log` |
+| `LOG_LEVEL` | `INFO` | Level for `logs/agent.log` (rotating, 5 × 5 MB) |
 
 Routing decisions appear in both the log (`[route] request=…`) and LangSmith (`route → <agent>` runs, `agent:<name>` tags) — see [Routing logs and LangSmith tracing](#routing-logs-and-langsmith-tracing).
 
