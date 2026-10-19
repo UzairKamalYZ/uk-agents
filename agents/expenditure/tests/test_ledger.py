@@ -174,3 +174,14 @@ def test_pending_roundtrip_with_unknown_amount(tmp_path):
 def test_corrupt_database_reads_no_pending(tmp_path):
     (tmp_path / DB_FILENAME).write_text("this is not a database")
     assert ExpenseLedger(tmp_path).get_pending() is None
+
+
+def test_top_expenses_excludes_undone_and_other_months(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    ledger.add(date(2026, 9, 30), "Old", 999)
+    ledger.add(date(2026, 10, 1), "A", 5)
+    ledger.add(date(2026, 10, 2), "B", 50)
+    ledger.add(date(2026, 10, 3), "C", 500)
+    ledger.undo_last()
+    assert ledger.top_expenses(2026, 10, limit=5) == [_e(date(2026, 10, 2), "B", "50.00"), _e(date(2026, 10, 1), "A", "5.00")]
+    assert ledger.top_expenses(2026, 10, limit=1) == [_e(date(2026, 10, 2), "B", "50.00")]

@@ -23,6 +23,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import GraphState
+from ..tracing import record_route
 from ._json import parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -71,13 +72,22 @@ class SupervisorNode:
         content = raw.text
 
         next_agent = self._parse_next(content)
-        logger.info("[supervisor] turns=%d → next=%s", state.get("turns", 0), next_agent)
+        logger.info("[supervisor] request=%s turns=%d → next=%s",
+                    state.get("request_id"), state.get("turns", 0), next_agent)
+        if next_agent in self._agent_names:
+            record_route("supervisor", next_agent, self._parse_reason(content), state.get("request_id"))
 
         return {"next": next_agent}
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_reason(text: str) -> str:
+        """The optional "reason" the supervisor gives for its choice ("" if absent)."""
+        data = parse_json_object(text, "next")
+        return str(data.get("reason") or "") if data is not None else ""
 
     def _parse_next(self, text: str) -> str:
         """

@@ -17,15 +17,8 @@ from core.src.config.config import Config
 from core.src.speech.transcriber import Transcriber
 from clients.base import BaseClient
 
-WAITING_JOKES = [
-    "Why did the scarecrow win an award? Because he was outstanding in his field — much like your future home!",
-    "Why do real estate agents make great comedians? Because they always know how to close!",
-    "What do you call a haunted property? A buy-one-get-one-scare deal.",
-    "Why did the house go to therapy? It had too many issues with its foundation.",
-    "What did the ocean say to the beach house? Nothing, it just waved.",
-    "Why don't houses ever get lonely? Because they're always in a good neighbourhood.",
-    "What's a real estate agent's favourite type of music? House!",
-]
+ROUTING_TEXT = "🔀 Finding the right agent for your query…"
+WORKING_TEXT = "🤖 {agent} is working on your query…"
 
 logger = logging.getLogger(__name__)
 
@@ -50,26 +43,39 @@ class _Bot:
         )
 
     async def _answer(self, update: Update, text: str, header: str = "") -> None:
-        joke = random.choice(WAITING_JOKES)
-        sent = await update.message.reply_text(
-            f"{header}Thinking...\n\n💡 While you wait: {joke}"
-        )
+        sent = await update.message.reply_text(f"{header}{ROUTING_TEXT}")
 
         session_id = str(update.effective_chat.id)
         is_owner = self._is_owner(update.effective_user.id)
+        loop = asyncio.get_running_loop()
+
+        def on_route(entry) -> None:
+            # Runs on the executor thread as soon as the orchestrator picks an agent —
+            # hop back onto the event loop to edit the placeholder, and wait so this
+            # edit always lands before the final answer.
+            status = self._working_text(entry)
+            asyncio.run_coroutine_threadsafe(sent.edit_text(f"{header}{status}"), loop).result(timeout=10)
 
         try:
             fn = functools.partial(
-                self.local_agent.ask, text, stream=False, session_id=session_id, is_owner=is_owner
+                self.local_agent.ask, text, stream=False, session_id=session_id,
+                is_owner=is_owner, on_route=on_route,
             )
             started = time.monotonic()
-            response = await asyncio.get_running_loop().run_in_executor(None, fn)
+            response = await loop.run_in_executor(None, fn)
             logger.info("Answered chat %s in %.1fs (%d chars)", session_id, time.monotonic() - started, len(response or ""))
             await sent.edit_text(f"{header}{response or 'No response generated.'}")
 
         except Exception:
             logger.exception("Error answering chat %s", session_id)
             await sent.edit_text("Sorry, something went wrong. Please try again.")
+
+    @staticmethod
+    def _working_text(entry) -> str:
+        status = WORKING_TEXT.format(agent=entry.label)
+        if entry.remarks:
+            status += f"\n\n😄 {random.choice(entry.remarks)}"
+        return status
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_text = update.message.text

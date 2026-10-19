@@ -42,6 +42,17 @@ def format_undone(e: Expense, prev: Decimal, cur: Decimal) -> str:
     return sign(f"↩️ Expense removed\n{_details(e)}\n\n{_totals_block(prev, cur)}")
 
 
+def format_summary(today: date, prev: Decimal, cur: Decimal, top: list[Expense]) -> str:
+    """Spending overview: both monthly totals, then this month's largest expenses."""
+    title = f"🏆 Top {len(top)} expenses — {today.strftime('%B %Y')}" if top else ""
+    lines = "\n".join(
+        f"{i}. {e.place} — {format_eur(e.amount)} ({e.date.strftime('%d %b')})" for i, e in enumerate(top, 1)
+    )
+    body = _totals_block(prev, cur)
+    body += f"\n\n{title}\n{lines}" if top else "\n\nNo expenses logged this month yet."
+    return sign(body)
+
+
 def format_breakdown(month: date, rows: list[tuple[str, Decimal]]) -> str:
     title = f"🧾 Spending by place — {month.strftime('%B %Y')}"
     if not rows:

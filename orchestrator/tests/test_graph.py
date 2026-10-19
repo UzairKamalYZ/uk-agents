@@ -123,3 +123,44 @@ def test_garbage_normaliser_reply_with_pending_reasks_without_supervisor():
     exp.discard_pending.assert_not_called()
     exp.confirm_pending.assert_not_called()
     exp.ask.assert_not_called()
+
+
+def test_on_route_announces_agent_before_it_runs():
+    agents = _agents(pending=None)
+    events = []
+    agents[1].instance.ask.side_effect = lambda *a, **k: events.append("agent ran") or "Saved"
+    llm = ScriptedLLM(json.dumps({"text": "Aldi €10", "pending": None}),
+                      ['{"next": "expenditure_tracker", "reason": "an expense"}', '{"next": "FINISH"}'])
+    answer = _build(llm, agents).ask(
+        "Aldi 10", "s1", is_owner=True, on_route=lambda entry: events.append(f"route {entry.name}")
+    )
+    assert answer == "Saved"
+    assert events == ["route expenditure_tracker", "agent ran"]
+
+
+def test_on_route_fires_for_pending_confirm():
+    agents = _agents(pending=SUMMARY)
+    routed = []
+    llm = ScriptedLLM(json.dumps({"text": "yes", "pending": "confirm"}), [])
+    _build(llm, agents).ask("yes", "s1", is_owner=True, on_route=lambda e: routed.append(e.name))
+    assert routed == ["expenditure_tracker"]
+
+
+def test_on_route_failure_does_not_break_the_request():
+    agents = _agents(pending=None)
+    llm = ScriptedLLM(json.dumps({"text": "hi", "pending": None}), ['{"next": "conversational_agent"}'])
+
+    def boom(_entry):
+        raise RuntimeError("telegram down")
+
+    assert _build(llm, agents).ask("hi", "s1", on_route=boom) == "Hello!"
+
+
+def test_routing_is_logged_with_request_id_and_reason(caplog):
+    agents = _agents(pending=None)
+    llm = ScriptedLLM(json.dumps({"text": "Aldi €10", "pending": None}),
+                      ['{"next": "expenditure_tracker", "reason": "an expense"}'])
+    with caplog.at_level("INFO", logger="orchestrator.tracing"), \
+         patch("orchestrator.graph.new_request_id", return_value="req123"):
+        _build(llm, agents).ask("Aldi 10", "s1", is_owner=True)
+    assert "[route] request=req123 supervisor → expenditure_tracker (an expense)" in caplog.text

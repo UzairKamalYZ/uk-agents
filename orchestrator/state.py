@@ -81,6 +81,10 @@ class GraphState(TypedDict):
     direct : bool
         True when a pre-supervisor step has already decided the routing
         (bypassing the supervisor LLM).  False at graph entry.
+
+    request_id : str
+        Short id for this user turn.  Written into routing log lines and the
+        LangSmith trace metadata so logs and traces can be matched up.
     """
 
     user_input: str
@@ -92,3 +96,4 @@ class GraphState(TypedDict):
     is_owner: bool
     raw_input: str
     direct: bool
+    request_id: str

@@ -183,6 +183,23 @@ class TestVoiceAndOwner(unittest.TestCase):
         self._run(bot._handle_message, bot, update, context, o)
         sent.edit_text.assert_awaited_with("Sorry, something went wrong. Please try again.")
 
+    def test_announces_picked_agent_with_remark_before_answer(self):
+        from types import SimpleNamespace
+        bot, update, context, sent, o = self._make()
+        entry = SimpleNamespace(label="Expenditure Tracker", remarks=("Counting your coins…",))
+
+        def ask(text, **kwargs):
+            kwargs["on_route"](entry)  # the orchestrator picks an agent mid-request
+            return "✅ Expense saved"
+
+        bot.local_agent.ask = MagicMock(side_effect=ask)
+        self._run(bot._handle_message, bot, update, context, o)
+        update.message.reply_text.assert_awaited_once_with("🔀 Finding the right agent for your query…")
+        self.assertEqual([c.args[0] for c in sent.edit_text.await_args_list], [
+            "🤖 Expenditure Tracker is working on your query…\n\n😄 Counting your coins…",
+            "✅ Expense saved",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

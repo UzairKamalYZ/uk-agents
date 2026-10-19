@@ -46,6 +46,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..agent_registry import AgentEntry
 from ..state import GraphState
+from ..tracing import record_route
 from ._json import parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,16 @@ class NormaliserNode:
     # ------------------------------------------------------------------
 
     def __call__(self, state: GraphState) -> dict[str, Any]:
+        result = self._run(state)
+        # When this node decided the agent itself (pending item), record it like a supervisor route.
+        routed = result.get("next")
+        if routed == "synthesiser" and result.get("agent_outputs"):
+            routed = next(iter(result["agent_outputs"]))
+        if routed and routed != "synthesiser":
+            record_route("normaliser", routed, "pending item", state.get("request_id"))
+        return result
+
+    def _run(self, state: GraphState) -> dict[str, Any]:
         raw = state.get("raw_input") or state["user_input"]
         session_id = state.get("session_id", "default")
         pending_agent, summary = self._find_pending(session_id, state.get("is_owner", False))

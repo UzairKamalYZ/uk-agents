@@ -15,6 +15,7 @@ from .replies import (
     format_logged,
     format_nothing,
     format_question,
+    format_summary,
     format_totals,
     format_undone,
 )
@@ -114,6 +115,17 @@ def get_expense_totals(*, ledger: ExpenseLedger | None = None) -> str:
     return format_totals(prev, cur)
 
 
+def get_expense_summary(*, ledger: ExpenseLedger | None = None) -> str:
+    """Spending overview: this month's and last month's totals, plus this month's 5 largest expenses.
+
+    Use for any general "how much have I spent / what are my expenses" question.
+    """
+    led = _ledger(ledger)
+    today = _today()
+    prev, cur = led.totals(today)
+    return format_summary(today, prev, cur, led.top_expenses(today.year, today.month, limit=5))
+
+
 def get_expense_breakdown(month: str | None = None, *, ledger: ExpenseLedger | None = None) -> str:
     """Summarise one month's spending: total per place (shop, merchant), largest first.
 
@@ -171,6 +183,11 @@ def _undo_last_expense() -> str:
 @server.tool(name="get_expense_totals", description=get_expense_totals.__doc__)
 def _get_expense_totals() -> str:
     return _call("get_expense_totals", get_expense_totals)
+
+
+@server.tool(name="get_expense_summary", description=get_expense_summary.__doc__)
+def _get_expense_summary() -> str:
+    return _call("get_expense_summary", get_expense_summary)
 
 
 @server.tool(name="get_expense_breakdown", description=get_expense_breakdown.__doc__)

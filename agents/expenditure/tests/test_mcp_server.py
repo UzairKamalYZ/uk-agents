@@ -129,7 +129,7 @@ def test_propose_without_amount_stores_unknown(ledger, tmp_path, amount):
     assert ledger.expenses() == []
 
 
-def test_server_lists_five_tools():
+def test_server_lists_six_tools():
     with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"EXPENSES_DIR": d}):
         proc = MCPProcess("expenses", [sys.executable, "-m", "agents.expenditure.mcp_server"])
         try:
@@ -138,8 +138,29 @@ def test_server_lists_five_tools():
             proc.close()
     assert {t["name"] for t in tools} == {
         "add_expense", "propose_expense", "undo_last_expense", "get_expense_totals", "get_expense_breakdown",
+        "get_expense_summary",
     }
     assert all("ledger" not in str(t.get("inputSchema")) for t in tools)
     required = {t["name"]: set(t["inputSchema"].get("required", [])) for t in tools}
     assert required["add_expense"] == {"place", "amount"}
     assert required["propose_expense"] == {"place", "problem"}
+
+
+def test_expense_summary_totals_and_top_five(ledger):
+    ledger.add(date(2026, 9, 3), "Rent", 900)
+    for place, amount in [("Aldi", 10), ("Colruyt", 150), ("Lidl", 7.5), ("IKEA", 230),
+                          ("Bakery", 3), ("Shell", 60), ("Colruyt", 42)]:
+        ledger.add(date(2026, 10, 2), place, amount)
+    assert mcp_server.get_expense_summary(ledger=ledger) == (
+        "📊 Totals\nLast month: €900.00\nThis month: €502.50\n\n"
+        "🏆 Top 5 expenses — October 2026\n"
+        "1. IKEA — €230.00 (02 Oct)\n2. Colruyt — €150.00 (02 Oct)\n3. Shell — €60.00 (02 Oct)\n"
+        "4. Colruyt — €42.00 (02 Oct)\n5. Aldi — €10.00 (02 Oct)\n\n— Expenditure Tracker"
+    )
+
+
+def test_expense_summary_with_no_expenses_this_month(ledger):
+    ledger.add(date(2026, 9, 3), "Rent", 900)
+    reply = mcp_server.get_expense_summary(ledger=ledger)
+    assert "Last month: €900.00\nThis month: €0.00" in reply
+    assert "No expenses logged this month yet." in reply

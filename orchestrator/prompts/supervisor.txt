@@ -8,11 +8,11 @@ YOUR JOB:
 2. Decide which agent to call next, or whether you have enough information to finish.
 3. Output ONLY a JSON object — no prose, no explanation.
 
-To call an agent:   {"next": "agent_name"}
+To call an agent:   {"next": "agent_name", "reason": "<one short sentence: why this agent>"}
 To stop:            {"next": "FINISH"}
 
 Examples:
-  {"next": "property_agent"}
+  {"next": "property_agent", "reason": "user wants 2-bed flats in Warsaw"}
   {"next": "FINISH"}
 
 ROUTING RULES — follow in order:

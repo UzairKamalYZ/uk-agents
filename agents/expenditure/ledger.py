@@ -124,6 +124,16 @@ class ExpenseLedger:
             totals[place.casefold()] = (name, total + _from_cents(cents))
         return sorted(totals.values(), key=lambda t: (-t[1], t[0].casefold()))
 
+    def top_expenses(self, year: int, month: int, limit: int = 5) -> list[Expense]:
+        """The largest single (not undone) expenses of one month, biggest first; ties → earliest saved."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT spent_on, place, amount_cents FROM expenses WHERE month = ? AND deleted_at IS NULL "
+                "ORDER BY amount_cents DESC, id LIMIT ?",
+                (_month_key(date(year, month, 1)), limit),
+            ).fetchall()
+        return [_row_to_expense(r) for r in rows]
+
     def set_pending(self, expense: Expense, problem: str) -> None:
         cents = None if expense.amount is None else _to_cents(expense.amount)
         with self._connect() as conn:

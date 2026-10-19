@@ -18,6 +18,7 @@ All agents share the same foundation:
 | `finance_agent` | Stock analysis and investment questions | Yahoo Finance MCP | Orchestrator |
 | `whatsapp_agent` | Short, mobile-friendly property answers | RAG (Pinecone) | Orchestrator |
 | `mail_agent` | Questions about emails, drafting replies | — | Orchestrator |
+| `expenditure_tracker` | Logs spending ("Aldi 10"), undo, monthly totals, top expenses, per-shop breakdown — see [docs/expenditure-tracker.md](docs/expenditure-tracker.md) | SQLite via local `expenses` MCP server | Orchestrator |
 | WhatsApp listener | Detects when Uzair is mentioned in a group and auto-replies | Green API | Standalone (`agents.whatsapp.main`) |
 | Mail monitor | Summarises new emails across inboxes and sends a digest | IMAP + Green API | Standalone (`agents.mails.main`) |
 
@@ -196,18 +197,24 @@ The supervisor graph is a LangGraph `StateGraph` compiled once at startup inside
 
 ```python
 class GraphState(TypedDict):
-    user_input: str
+    user_input: str                          # cleaned message (the normaliser rewrites it)
+    raw_input: str                           # the message exactly as received
     session_id: str
+    request_id: str                          # short id per turn — in logs and LangSmith metadata
+    is_owner: bool                           # gates agents marked "owner_only"
     messages: Annotated[list, add_messages]  # append-only
     agent_outputs: dict[str, str]            # name → answer collected so far
-    next: str                                # routing token from supervisor
+    next: str                                # routing token
+    direct: bool                             # normaliser already chose the agent
     turns: int                               # number of agent calls this turn
 ```
 
 **Graph topology** (`orchestrator/graph.py`):
 
 ```
-START → supervisor → [conditional edge] → agent_X → supervisor → ... → synthesiser → END
+START → normaliser ─┬─► supervisor → [router] → agent_X → supervisor → … → synthesiser → END
+                    ├─► agent_X        (correction to a pending item)
+                    └─► synthesiser    (pending item confirmed / discarded / re-asked)
 ```
 
 The conditional edge logic (the *router*) runs after every supervisor call:
@@ -215,17 +222,51 @@ The conditional edge logic (the *router*) runs after every supervisor call:
 | Condition | Routes to |
 |---|---|
 | `turns >= MAX_AGENT_TURNS` (6) | `synthesiser` (loop guard) |
+| `direct` turn and the agent has answered | `synthesiser` |
 | supervisor says an agent name AND that agent hasn't run yet | that agent |
 | supervisor says an agent that already ran | `synthesiser` (prevents re-call loops) |
 | supervisor says `FINISH` or anything else | `synthesiser` |
+
+### Normaliser node (`orchestrator/nodes/normaliser.py`)
+
+First node of every turn. One LLM call cleans the message (voice-transcription fixes, spoken numbers → `€90`, "yesterday" → `YYYY-MM-DD`, no currency → euros) and, when an agent holds a pending item (e.g. an expense awaiting "yes"), classifies the reply as confirm / cancel / correction / unrelated. Confirm and cancel are resolved in code without the supervisor, so a bare "yes" never ends up as small talk.
+
+### Telling the user which agent is working
+
+Callers of `OrchestratorAgent.ask(...)` can pass `on_route`, a callback that receives the picked agent's `AgentEntry` **as soon as the supervisor (or normaliser) chooses it — before that agent runs**. The Telegram client uses it to turn its placeholder into a status line, then edits in the final answer:
+
+```
+🔀 Finding the right agent for your query…
+        ↓ (agent picked)
+🤖 Expenditure Tracker is working on your query…
+
+😄 Counting your coins — every cent, no judgement. Well, a little judgement.
+        ↓ (agent answered, synthesiser formatted)
+✅ Expense saved …
+```
+
+The name and remarks come from `agents.json` (`display_name`, `remarks` — one remark is picked at random; without them the name is title-cased from `name`). A failing callback is logged and never breaks the request.
+
+### Routing logs and LangSmith tracing
+
+Every routing decision is logged **and** traced, with the same `request_id` in both:
+
+```
+… orchestrator.tracing - INFO - [route] request=3f9c1a2b7d4e supervisor → expenditure_tracker (user logged a purchase at Aldi)
+```
+
+- The supervisor replies `{"next": "<agent>", "reason": "<why>"}`; the reason goes into the log line and the trace.
+- With `LANGCHAIN_TRACING_V2=true`, each request is one LangSmith trace, `orchestrator.request` → `orchestrator.graph` → one run per node. Every decision adds a small run named **`route → <agent>`**, tagged `agent:<agent>` and `routed_by:supervisor|normaliser`, with `{agent, reason, request_id}` as metadata.
+- The top-level `orchestrator.request` trace is also tagged `agent:<agent>` for each agent that handled it. In LangSmith, filter by tag `agent:expenditure_tracker` to list every request that agent served, or by metadata `request_id` to jump from a log line to its trace.
+- Implementation: `orchestrator/tracing.py` (`record_route`, `tag_current_trace`); run name, tags and metadata for the graph are set in `MultiAgentGraph._run_config`.
 
 ### Supervisor node (`orchestrator/nodes/supervisor.py`)
 
 The supervisor is an LLM call that reads the current state and emits JSON:
 
 ```json
-{"next": "property_agent"}   // call this agent next
-{"next": "FINISH"}           // enough information, go to synthesiser
+{"next": "property_agent", "reason": "user wants 2-bed flats"}   // call this agent next
+{"next": "FINISH"}                                                // enough information, go to synthesiser
 ```
 
 Routing rules (from `orchestrator/prompts/supervisor.txt`):
@@ -745,6 +786,9 @@ Example `MAIL_ACCOUNTS` value:
 | `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | _(empty)_ | LangSmith API key |
 | `LANGCHAIN_PROJECT` | `uk-agents` | LangSmith project name |
+| `LOG_LEVEL` | `INFO` | Level for `logs/agent.log` (rotating, 5 × 5 MB). The expenses MCP server writes `logs/mcp-expenses.log` |
+
+Routing decisions appear in both the log (`[route] request=…`) and LangSmith (`route → <agent>` runs, `agent:<name>` tags) — see [Routing logs and LangSmith tracing](#routing-logs-and-langsmith-tracing).
 
 ---
 

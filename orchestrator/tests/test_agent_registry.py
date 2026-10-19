@@ -23,3 +23,15 @@ def test_owner_only_read_and_defaults_false(tmp_path):
     entries = {e.name: e for e in load_agents(f)}
     assert entries["a"].owner_only is True
     assert entries["b"].owner_only is False
+
+
+def test_display_name_and_remarks_read_with_fallback_label(tmp_path):
+    f = _write(tmp_path, [
+        _spec("expenditure_tracker", display_name="Expenditure Tracker", remarks=["Counting coins…"]),
+        _spec("finance_agent"),
+    ])
+    entries = {e.name: e for e in load_agents(f)}
+    assert entries["expenditure_tracker"].label == "Expenditure Tracker"
+    assert entries["expenditure_tracker"].remarks == ("Counting coins…",)
+    assert entries["finance_agent"].label == "Finance Agent"
+    assert entries["finance_agent"].remarks == ()
