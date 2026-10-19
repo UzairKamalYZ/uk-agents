@@ -31,7 +31,7 @@ def test_propose_expense_stores_pending_and_writes_nothing(ledger, tmp_path):
     reply = mcp_server.propose_expense("Colruyt", "amount looks high", 900, "2026-10-18", ledger=ledger)
     assert reply.startswith("⚠️ Please check this expense\n📍 Colruyt")
     assert ledger.get_pending() is not None
-    assert not (tmp_path / "2026-10.txt").exists()
+    assert ledger.expenses() == []
 
 
 def test_add_expense_clears_pending(ledger):
@@ -113,7 +113,7 @@ def test_smallest_valid_amount_after_rounding(ledger):
 def test_dateless_add_expense_uses_today(ledger, tmp_path, dateless):
     reply = mcp_server.add_expense("Colruyt", 90, dateless, ledger=ledger)
     assert "📅 Sun 18 Oct 2026" in reply
-    assert "2026-10-18 | Colruyt | 90.00" in (tmp_path / "2026-10.txt").read_text()
+    assert ledger.expenses() == [Expense(TODAY, "Colruyt", Decimal("90.00"))]
 
 
 def test_dateless_propose_expense_uses_today(ledger):
@@ -126,7 +126,7 @@ def test_propose_without_amount_stores_unknown(ledger, tmp_path, amount):
     reply = mcp_server.propose_expense("Colruyt", "amount missing", amount, "2026-10-18", ledger=ledger)
     assert "💶 amount unknown\n" in reply
     assert ledger.get_pending() == (Expense(TODAY, "Colruyt", None), "amount missing")
-    assert not (tmp_path / "2026-10.txt").exists()
+    assert ledger.expenses() == []
 
 
 def test_server_lists_five_tools():

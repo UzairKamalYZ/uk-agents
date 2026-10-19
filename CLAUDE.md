@@ -130,7 +130,7 @@ class BaseClient(ABC):
 
 ### Logging (`logging_config.py`)
 
-Central `setup_logging()` function — called once at the top of each client entrypoint. Writes to both terminal and `logs/agent.log` at INFO level. All `getLogger(__name__)` calls in the process inherit from it automatically.
+Central `setup_logging()` function — called once at the top of each client entrypoint. Writes to the terminal and a rotating `logs/agent.log` (level from `LOG_LEVEL`, default INFO); `httpx`/`telegram.ext` and other chatty libraries are held at WARNING so request URLs (which contain the Telegram bot token) are never logged. All `getLogger(__name__)` calls in the process inherit from it automatically.
 
 ```python
 from logging_config import setup_logging
@@ -163,7 +163,8 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from @BotFather |
 | `TELEGRAM_OWNER_ID` | _(empty)_ | Telegram user id of the owner; only needed for agents marked `"owner_only": true` in `agents.json` (none by default) |
 | `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
-| `EXPENSES_DIR` | _(per-user data dir)_ | Expense ledger directory: monthly files, `inputs.log` (every message the expense agent received), history and pending item. Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
+| `EXPENSES_DIR` | _(per-user data dir)_ | Folder holding `expenses.db` (SQLite): every expense (undo marks a row deleted, it is never removed), every message the expense agent received, the pending item, and a `monthly_totals` view. Survives restarts. Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
+| `LOG_LEVEL` | `INFO` | Log level for `logs/agent.log` (rotating, 5 × 5 MB); the expenses MCP server logs to `logs/mcp-expenses.log` |
 | `NORMALISER_PROMPT_FILE` | `orchestrator/prompts/normaliser.txt` | Orchestrator normaliser prompt path |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled cron job |

@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -41,6 +42,7 @@ class ExpenditureAgent(BaseAgent):
         return date.today()
 
     def ask(self, prompt: str, stream: bool = False, session_id: str = None):
+        logger.info("ExpenditureAgent: received %r (session=%s)", prompt, session_id)
         self._log_input(prompt)
         if not self._tools_available:
             return iter([UNAVAILABLE_REPLY]) if stream else UNAVAILABLE_REPLY
@@ -75,5 +77,5 @@ class ExpenditureAgent(BaseAgent):
         # The input log is a record, not a gate — a write failure must not block the reply.
         try:
             self._ledger.log_input(text)
-        except OSError:
-            logger.exception("ExpenditureAgent: could not write the input log")
+        except (OSError, sqlite3.Error):
+            logger.exception("ExpenditureAgent: could not record the input")

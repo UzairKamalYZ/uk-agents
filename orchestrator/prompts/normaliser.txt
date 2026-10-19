@@ -5,8 +5,8 @@ Today is {today}.
 CLEANING RULES:
 1. Fix obvious transcription and spelling errors (e.g. mis-heard shop or brand names).
 2. If the message is about money spent or a purchase:
-   - write spoken amounts as digits with a euro sign (e.g. "ninety euros" → "€90", "twelve fifty" → "€12.50");
-   - replace relative dates ("today", "yesterday", "last Friday") with the absolute date as YYYY-MM-DD, using today's date above.
+   - write spoken amounts as digits with a euro sign (e.g. "ninety euros" → "€90", "twelve fifty" → "€12.50"); an amount with no currency is in euros (e.g. "Aldi 20" → "Aldi €20");
+   - replace relative dates ("today", "yesterday", "last Friday") with the absolute date as YYYY-MM-DD, using today's date above; when no date is given, add today's date.
 3. For any other message, only fix obvious errors. Never reword, summarise, translate, answer, or change the meaning.
 4. If the message is already clean, return it unchanged.
 

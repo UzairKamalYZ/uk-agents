@@ -6,6 +6,7 @@ import functools
 import logging
 import random
 import tempfile
+import time
 from pathlib import Path
 
 from telegram import Update
@@ -61,11 +62,13 @@ class _Bot:
             fn = functools.partial(
                 self.local_agent.ask, text, stream=False, session_id=session_id, is_owner=is_owner
             )
+            started = time.monotonic()
             response = await asyncio.get_running_loop().run_in_executor(None, fn)
+            logger.info("Answered chat %s in %.1fs (%d chars)", session_id, time.monotonic() - started, len(response or ""))
             await sent.edit_text(f"{header}{response or 'No response generated.'}")
 
-        except Exception as e:
-            logger.error(f"Error from LocalAgent: {e}")
+        except Exception:
+            logger.exception("Error answering chat %s", session_id)
             await sent.edit_text("Sorry, something went wrong. Please try again.")
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,13 +86,14 @@ class _Bot:
                 transcript = await asyncio.get_running_loop().run_in_executor(
                     None, self.transcriber.transcribe, path
                 )
-        except Exception as e:
-            logger.error(f"Voice transcription failed: {e}")
+        except Exception:
+            logger.exception("Voice transcription failed")
             await update.message.reply_text(
                 "Sorry, I couldn't transcribe that voice note. Please try again or type it."
             )
             return
 
+        logger.info("Transcribed voice note from %s: %r", update.effective_user.id, transcript)
         if not transcript:
             await update.message.reply_text("🎤 I couldn't hear anything — please try again or type it.")
             return

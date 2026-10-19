@@ -1,5 +1,6 @@
 """Local stdio MCP server exposing the expense ledger as tools."""
 
+import logging
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -17,6 +18,8 @@ from .replies import (
     format_totals,
     format_undone,
 )
+
+logger = logging.getLogger(__name__)
 
 server = MCPServer("expenses")
 
@@ -137,31 +140,48 @@ def _parse_month(month: str | None) -> date | str:
         return f"Invalid month '{month}', expected current, previous or YYYY-MM."
 
 
+def _call(tool: str, fn, *args) -> str:
+    """Run one tool, logging its arguments and the first line of its reply (errors included)."""
+    logger.info("tool %s called with %s", tool, args)
+    try:
+        reply = fn(*args)
+    except Exception:
+        logger.exception("tool %s failed", tool)
+        raise
+    logger.info("tool %s → %s", tool, reply.splitlines()[0] if reply else "")
+    return reply
+
+
 # Thin wrappers keep the `ledger` kwarg out of the tool schemas.
 @server.tool(name="add_expense", description=add_expense.__doc__)
 def _add_expense(place: str, amount: float, date: str | None = None) -> str:
-    return add_expense(place, amount, date)
+    return _call("add_expense", add_expense, place, amount, date)
 
 
 @server.tool(name="propose_expense", description=propose_expense.__doc__)
 def _propose_expense(place: str, problem: str, amount: float | None = None, date: str | None = None) -> str:
-    return propose_expense(place, problem, amount, date)
+    return _call("propose_expense", propose_expense, place, problem, amount, date)
 
 
 @server.tool(name="undo_last_expense", description=undo_last_expense.__doc__)
 def _undo_last_expense() -> str:
-    return undo_last_expense()
+    return _call("undo_last_expense", undo_last_expense)
 
 
 @server.tool(name="get_expense_totals", description=get_expense_totals.__doc__)
 def _get_expense_totals() -> str:
-    return get_expense_totals()
+    return _call("get_expense_totals", get_expense_totals)
 
 
 @server.tool(name="get_expense_breakdown", description=get_expense_breakdown.__doc__)
 def _get_expense_breakdown(month: str | None = None) -> str:
-    return get_expense_breakdown(month)
+    return _call("get_expense_breakdown", get_expense_breakdown, month)
 
 
 if __name__ == "__main__":
+    from logging_config import setup_logging
+
+    # stdout carries the MCP protocol, so this subprocess logs to its own file only.
+    setup_logging(console=False, log_file="mcp-expenses.log")
+    logger.info("expenses MCP server starting (EXPENSES_DIR=%s)", Config.EXPENSES_DIR)
     server.run()
