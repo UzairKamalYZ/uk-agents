@@ -154,6 +154,7 @@ Optional hooks for agents that keep a "pending item awaiting yes/no" (the normal
 - Always uses the local `claude` CLI login, whatever `ANTHROPIC_API` says, because Chrome only exists there.
 - Permissions are enforced in code: built-in tools are limited to Read/Write/Edit/Glob/Grep (no Bash, no web), writes are allowed only under `snapshots/` and the skill's `iris-notes.md`, plus `mcp__claude-in-chrome`. `permission_mode="dontAsk"` denies everything else.
 - Only one turn runs at a time (one browser); a second message gets `BUSY`.
+- **Filing tracker** (`tracker.py`, `filings.db` in `FBR_TAX_DATA_DIR`): the agent's own record of each tax year (`submitted` / `draft_saved` / `not_started`, draft count, when it was checked in IRIS). It is given to the session as the in-process MCP server `fbr_tracker`. `FilingTracker.decide(N)` holds the rules: N submitted → stop; N-1 not submitted → ask; a draft exists → ask "continue or fresh?"; otherwise create the draft. A non-submitted record older than 12 h means "check IRIS again".
 - It never goes past Save Draft. It may click Submit only when the user's own latest message says so, and the e-filing PIN is always typed by the user (`prompts/System_Prompt.txt` adds this on top of the skill's hard rules).
 - `owner_only: true`: needs `TELEGRAM_OWNER_ID` in `.env`.
 - Replies (amounts) pass through the orchestrator, so they reach Telegram, `sessions.db` and LangSmith traces. The tax snapshots themselves stay in `FBR_TAX_DIR`.
@@ -197,6 +198,7 @@ All settings live in `.env` at the project root. `core/src/config/config.py` loa
 | `WHISPER_MODEL` | `small` | faster-whisper size: `tiny` / `base` / `small` / `medium` / `large-v3` |
 | `EXPENSES_DIR` | _(per-user data dir)_ | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `%APPDATA%\uk-agents\expenses` (Windows). Relative paths resolve from the project root |
 | `FBR_TAX_DIR` / `FBR_TAX_MAX_TURNS` | `~/work/fbr-tax-filing` / `200` | FBR filing project (holds the skill and `snapshots/`); max tool calls per filing step |
+| `FBR_TAX_DATA_DIR` | _(per-user data dir)/fbr_tax_ | The FBR agent's `filings.db` (status of each tax year) |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `API_KEY` | _(empty — auth off)_ | REST `X-API-Key` |
 | `MAX_HISTORY_TURNS` | `10` | Turns of chat history sent to the LLM per agent and session |

@@ -8,6 +8,7 @@ from core.src.config.config import Config
 from core.src.utils import load_prompt
 
 from .runner import SKILL, FilingRunner, FilingSessions
+from .tracker import FilingTracker
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class FbrTaxAgent(BaseAgent):
         super().__init__(*args, **kwargs)
         self._runner = FilingRunner(
             Path(Config.FBR_TAX_DIR), load_prompt(_PROMPT_FILE),
+            FilingTracker(Path(Config.FBR_TAX_DATA_DIR) / "filings.db"),
             model=kwargs.get("llm_model") or Config.LLM_MODEL_NAME,
             effort=Config.LLM_EFFORT, max_turns=Config.FBR_TAX_MAX_TURNS,
         )

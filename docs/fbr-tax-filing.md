@@ -9,6 +9,19 @@ Files your Pakistan income tax return (Form 114(1)) and wealth statement (Form 1
 - `TELEGRAM_OWNER_ID` set in `.env` to your Telegram user id (from @userinfobot). The agent is owner-only and refuses everyone while this is empty.
 - Optional: set `FBR_TAX_DIR` if the filing project lives somewhere else.
 
+## Before any draft: the status check
+
+The agent keeps its own record of every tax year in `filings.db` (per-user data dir, `…/uk-agents/fbr_tax/`). Before creating, opening or deleting a draft for tax year N, it checks IRIS: Completed Tasks → DECLARATION for N-1 and N, and the Draft tab for N. It records what it saw, then follows the decision made in code:
+
+| IRIS shows | The agent |
+|---|---|
+| N already submitted | Tells you and does nothing in IRIS |
+| N-1 not submitted | Tells you and asks how to proceed (last year's return is the template) |
+| N not submitted, draft(s) exist | Says how many drafts there are and asks: continue the existing draft, or start fresh? Fresh means deleting those drafts first, and happens only if you choose it |
+| N not submitted, no draft | Creates the draft |
+
+A record that isn't "submitted" is trusted for 12 hours; after that the agent checks IRIS again. It records `draft_saved` after saving and `submitted` once IRIS shows it or you tell it. Questions like "was 2026 submitted?" are answered from the record, along with when it was last checked.
+
 ## A filing, message by message
 
 ```

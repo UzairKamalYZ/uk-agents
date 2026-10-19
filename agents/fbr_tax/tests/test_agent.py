@@ -6,6 +6,7 @@ import pytest
 from agents.fbr_tax import runner as runner_mod
 from agents.fbr_tax.agent import BUSY, FAILED, FbrTaxAgent
 from agents.fbr_tax.runner import SESSION_TTL, SKILL, FilingRunner, FilingSessions
+from agents.fbr_tax.tracker import SERVER_NAME, FilingTracker
 
 NOW = datetime(2026, 10, 19, 20, 0)
 
@@ -25,6 +26,7 @@ def agent(tmp_path, project):
          patch("agents.fbr_tax.agent.Config") as cfg:
         cfg.FBR_TAX_DIR = str(project)
         cfg.SESSION_DB_FILE = str(tmp_path / "sessions.db")
+        cfg.FBR_TAX_DATA_DIR = str(tmp_path / "data")
         cfg.LLM_MODEL_NAME = "claude-opus-5-5"
         cfg.LLM_EFFORT = "medium"
         cfg.FBR_TAX_MAX_TURNS = 50
@@ -95,7 +97,7 @@ def test_session_store_round_trip(tmp_path):
 
 
 def test_options_lock_down_tools_and_enable_skill_and_chrome(project):
-    opts = FilingRunner(project, "extra rules", model="m", max_turns=7)._options("cc-1")
+    opts = FilingRunner(project, "extra rules", FilingTracker(project / "f.db"), model="m", max_turns=7)._options("cc-1")
     assert opts.cwd == str(project)
     assert opts.resume == "cc-1"
     assert opts.skills == [SKILL, "claude-in-chrome"]
@@ -106,6 +108,7 @@ def test_options_lock_down_tools_and_enable_skill_and_chrome(project):
     assert not any(t in ("Write", "Edit") for t in opts.allowed_tools)   # writes are path-scoped only
     assert opts.system_prompt["append"] == "extra rules"
     assert opts.setting_sources == ["project"]
+    assert SERVER_NAME in opts.mcp_servers and f"mcp__{SERVER_NAME}" in opts.allowed_tools
 
 
 def test_run_returns_result_and_session(project):
@@ -116,7 +119,7 @@ def test_run_returns_result_and_session(project):
         yield result
 
     with patch.object(runner_mod, "query", fake_query):
-        assert FilingRunner(project, "x").run("hi") == ("done", "cc-9")
+        assert FilingRunner(project, "x", FilingTracker(project / "f.db")).run("hi") == ("done", "cc-9")
 
 
 def test_run_raises_on_error_result(project):
@@ -127,4 +130,4 @@ def test_run_raises_on_error_result(project):
         yield result
 
     with patch.object(runner_mod, "query", fake_query), pytest.raises(RuntimeError):
-        FilingRunner(project, "x").run("hi")
+        FilingRunner(project, "x", FilingTracker(project / "f.db")).run("hi")

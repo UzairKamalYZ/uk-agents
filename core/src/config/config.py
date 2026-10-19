@@ -72,6 +72,8 @@ class Config:
     # FBR (Pakistan) tax filing — the project holding the fbr-iris-filing skill and its snapshots/;
     # a relative path is resolved from the project root, "~" is expanded
     FBR_TAX_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DIR") or "~/work/fbr-tax-filing").expanduser())
+    # The FBR agent's own records (filings.db: each tax year's submitted/draft status)
+    FBR_TAX_DATA_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DATA_DIR") or _user_data_dir() / "fbr_tax").expanduser())
     # Tool calls one filing step may take (reading a whole return is many browser actions)
     FBR_TAX_MAX_TURNS = int(os.getenv("FBR_TAX_MAX_TURNS", "200"))
     # Local faster-whisper model size for voice transcription

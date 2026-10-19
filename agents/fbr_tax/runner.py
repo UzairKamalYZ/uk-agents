@@ -11,7 +11,8 @@ a question; the next message resumes the same session.  FilingSessions remembers
 which Claude Code session belongs to which chat.
 
 Permissions are fixed here, not left to the prompt: no Bash, no web tools, and
-file writes only to snapshots/ and the skill's iris-notes.md.
+file writes only to snapshots/ and the skill's iris-notes.md.  The session also gets the
+filing tracker (tracker.py), which decides whether a draft may be created.
 """
 from __future__ import annotations
 
@@ -23,6 +24,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+
+from .tracker import SERVER_NAME as TRACKER, FilingTracker, build_server
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,7 @@ _ALLOWED_TOOLS = [
     "Write(/snapshots/**)", "Edit(/snapshots/**)",
     f"Write({_NOTES})", f"Edit({_NOTES})",
     "mcp__claude-in-chrome",
+    f"mcp__{TRACKER}",
 ]
 _BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
 
@@ -92,10 +96,11 @@ class FilingRunner:
     """One turn of a Claude Code session in the fbr-tax-filing project."""
 
     def __init__(
-        self, project_dir: Path, instructions: str,
+        self, project_dir: Path, instructions: str, tracker: FilingTracker,
         model: str | None = None, effort: str | None = None, max_turns: int = 200,
     ) -> None:
         self._project_dir = project_dir
+        self._tracker = tracker
         self._instructions = instructions
         self._model = model
         self._effort = effort
@@ -131,6 +136,7 @@ class FilingRunner:
             resume=resume,
             skills=[SKILL, "claude-in-chrome"],
             tools=_BUILTIN_TOOLS,             # no Bash, no web fetch/search
+            mcp_servers={TRACKER: build_server(self._tracker)},
             allowed_tools=_ALLOWED_TOOLS,
             permission_mode="dontAsk",        # anything not allowed above is denied
             setting_sources=["project"],      # the filing project's skill; not the user's hooks/plugins
