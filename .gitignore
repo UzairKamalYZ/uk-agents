@@ -12,7 +12,6 @@ logs/
 .superpowers
 .playwright-mcp
 .idea
-agentP/.agents/
 
 
 # Python
@@ -35,8 +34,6 @@ node_modules/
 # Expense ledger data
 expenses/
 /.claude/
-/agentP/.agents/
-/agentP/skills-lock.json
-
+/
 # Chat history (core/src/model/session_manager.py)
 sessions.db*

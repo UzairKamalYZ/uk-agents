@@ -2,11 +2,7 @@
 Pytest configuration for clients/tests/.
 
 Responsibilities:
-1. Stub agentP.src.agent and agentP.src.config.config at the sys.modules
-   level.  This stops Python following the deep LLM/vector-store import chain
-   when client modules are collected (e.g. `from agentP.src.agent import
-   LocalAgent`), while leaving agentP.src itself as a real package so that
-   agentP/tests can still import the real model and persistence modules.
+1. Stub core.src.config.config so clients get predictable settings.
 2. Stub orchestrator.agent_interface so that importing clients does not
    trigger the full orchestrator → graph → llm_factory → langchain_anthropic
    import chain.
@@ -48,15 +44,6 @@ _stub("langchain_anthropic")
 _orchestrator_interface = _stub("orchestrator.agent_interface")
 _orchestrator_interface.OrchestratorAgent = MagicMock
 
-# ---------------------------------------------------------------------------
-# agentP.src.agent — clients import LocalAgent from here.
-# Stubbing the *module* (not the package) blocks the whole agent import chain
-# (llm_factory → langchain_anthropic, llm_model_graph → langgraph, etc.)
-# without touching the real agentP.src package that agentP/tests rely on.
-# ---------------------------------------------------------------------------
-_agent_mod = _stub("agentP.src.agent")
-_agent_mod.PropertySearchAgent = MagicMock
-
 # core.src.config.config — clients now import Config from here
 _core_config_mod = _stub("core.src.config.config")
 _Config = MagicMock()
@@ -73,10 +60,6 @@ _Config.LANGCHAIN_API_KEY = ""
 # registry correctly even when core.src.config.config is stubbed.
 _Config.MCP_FILE = str(_PROJECT_ROOT / "mcp.json")
 _core_config_mod.Config = _Config
-
-# agentP.src.config.config — kept as alias so any remaining references still resolve
-_config_mod = _stub("agentP.src.config.config")
-_config_mod.Config = _Config
 
 # ---------------------------------------------------------------------------
 # Third-party packages not installed in the minimal test environment

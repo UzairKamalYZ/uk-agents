@@ -65,8 +65,6 @@ uk-agents/
 └── logs/                       # agent.log (git-ignored)
 ```
 
-`agentP/` is a leftover from before the `core/` + `agents/` split, and only an empty test package remains. Don't add code there.
-
 ---
 
 ## Key Architecture

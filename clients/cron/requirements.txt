@@ -1,2 +1,2 @@
-# No additional dependencies beyond the core agentP requirements.
-# Install from the project root: pip install -r agentP/requirements.txt
+# No additional dependencies beyond the project's own (pyproject.toml).
+# Install from the project root: uv sync
