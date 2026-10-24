@@ -123,5 +123,30 @@ class TestChatClaudeCode(unittest.TestCase):
         self.assertIsNone(calls[0][1].output_format)
 
 
+    def test_sdk_tool_handler_awaits_async_tools(self):
+        import asyncio
+        calls = []
+
+        async def convert(from_currency: str, amount: float) -> str:
+            calls.append("async")
+            return f"{amount} {from_currency}"
+
+        tool = StructuredTool.from_function(func=_convert, coroutine=convert, name="convert")
+        result = asyncio.run(ChatClaudeCode._to_sdk_tool(tool).handler({"from_currency": "PLN", "amount": 2}))
+        self.assertEqual(result, {"content": [{"type": "text", "text": "2.0 PLN"}]})
+        self.assertEqual(calls, ["async"])
+
+    def test_sdk_tool_handler_reports_errors(self):
+        import asyncio
+
+        def broken(x: int) -> str:
+            raise ValueError("bad")
+
+        tool = StructuredTool.from_function(func=broken, name="broken", description="Always fails.")
+        result = asyncio.run(ChatClaudeCode._to_sdk_tool(tool).handler({"x": 1}))
+        self.assertTrue(result["is_error"])
+        self.assertIn("bad", result["content"][0]["text"])
+
+
 if __name__ == "__main__":
     unittest.main()

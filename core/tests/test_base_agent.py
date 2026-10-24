@@ -129,6 +129,15 @@ class TestBaseAgent(unittest.TestCase):
         self.mock_model.ask_stream.assert_called_once()
         self.assertEqual(list(result), ["tok1", "tok2"])
 
+    def test_should_delegate_aask_to_model_aask(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+        self.mock_model.aask = AsyncMock(return_value="async answer")
+        self.assertEqual(asyncio.run(self.agent.aask("question")), "async answer")
+        self.mock_model.aask.assert_awaited_once_with("question", session_id="test-session")
+        self.assertEqual(asyncio.run(self.agent.aask("q", session_id="override")), "async answer")
+        self.assertEqual(self.mock_model.aask.call_args.kwargs["session_id"], "override")
+
     # ------------------------------------------------------------------
     # close() / context manager
     # ------------------------------------------------------------------

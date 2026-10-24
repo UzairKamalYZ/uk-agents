@@ -2,7 +2,6 @@ from logging_config import setup_logging
 setup_logging()
 
 import asyncio
-import functools
 import logging
 import random
 import tempfile
@@ -34,7 +33,8 @@ class _Bot:
     def __init__(self):
         self.local_agent = OrchestratorAgent()
         self.transcriber = Transcriber()
-        self.app = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).build()
+        # Chats are answered concurrently; the orchestrator keeps each chat's messages in order
+        self.app = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(CommandHandler("whoami", self._handle_whoami))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
@@ -87,10 +87,7 @@ class _Bot:
         logger.info("chat=%s sender=%s owner=%s", session_id, sorted(self._sender_keys(update)), is_owner)
 
         try:
-            fn = functools.partial(
-                self.local_agent.ask, text, stream=False, session_id=session_id, is_owner=is_owner
-            )
-            response = await asyncio.get_running_loop().run_in_executor(None, fn)
+            response = await self.local_agent.aask(text, session_id=session_id, is_owner=is_owner)
             await sent.edit_text(f"{header}{response or 'No response generated.'}")
 
         except Exception as e:

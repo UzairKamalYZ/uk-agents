@@ -28,12 +28,10 @@ next call.  Tool errors never raise — the LLM gets a short error string.
 """
 
 import asyncio
-import concurrent.futures
 import keyword
 import logging
 import os
-import threading
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Optional
 from urllib.parse import urlencode
@@ -44,6 +42,8 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.types import CallToolResult, Tool
 from pydantic import BaseModel, Field, create_model
+
+from ..aio import BackgroundLoop
 
 logger = logging.getLogger(__name__)
 
@@ -108,38 +108,6 @@ def _build_args_model(tool_name: str, input_schema: dict) -> type[BaseModel]:
     # Store the safe→original name mapping as a class attribute.
     model._name_map = {_sanitize_field_name(k): k for k in properties}  # type: ignore[attr-defined]
     return model
-
-
-# ---------------------------------------------------------------------------
-# Background event loop shared by every MCP connection
-# ---------------------------------------------------------------------------
-
-
-class _LoopThread:
-    """One asyncio loop on a daemon thread; MCP connections live here."""
-
-    def __init__(self) -> None:
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._lock = threading.Lock()
-
-    def _ensure(self) -> asyncio.AbstractEventLoop:
-        with self._lock:
-            if self._loop is None or self._loop.is_closed():
-                loop = asyncio.new_event_loop()
-                threading.Thread(target=loop.run_forever, name="mcp-loop", daemon=True).start()
-                self._loop = loop
-            return self._loop
-
-    def submit(self, coro: Coroutine) -> concurrent.futures.Future:
-        return asyncio.run_coroutine_threadsafe(coro, self._ensure())
-
-    def run(self, coro: Coroutine) -> Any:
-        """Run on the MCP loop and block for the result (sync callers)."""
-        return self.submit(coro).result()
-
-    async def arun(self, coro: Coroutine) -> Any:
-        """Run on the MCP loop and await the result (async callers, any loop)."""
-        return await asyncio.wrap_future(self.submit(coro))
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +305,7 @@ class MCPRegistry:
         self._servers: dict[str, MCPServerConnection] = {}
         # Servers excluded from the default (server_name=None) tool set, e.g. ledger writers.
         self._owner_only: set[str] = set()
-        self._loop = _LoopThread()
+        self._loop = BackgroundLoop("mcp-loop")
 
     # ------------------------------------------------------------------ #
     # Registration                                                         #

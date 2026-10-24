@@ -83,8 +83,9 @@ class TestTelegramClient(unittest.TestCase):
 class TestBot(unittest.TestCase):
     """Tests for the internal _Bot helper class."""
 
+    @patch("clients.telegram.main.ApplicationBuilder")
     @patch("clients.telegram.main.OrchestratorAgent")
-    def test_should_create_local_agent_when_bot_is_created(self, MockAgent):
+    def test_should_create_local_agent_when_bot_is_created(self, MockAgent, _MockBuilder):
         """_Bot instantiates OrchestratorAgent during construction."""
         from clients.telegram.main import _Bot
         _Bot()
@@ -98,6 +99,7 @@ class TestBot(unittest.TestCase):
         with patch("clients.telegram.main.ApplicationBuilder") as MockBuilder:
             _Bot()
             MockBuilder.return_value.token.assert_called_once_with(Config.TELEGRAM_BOT_TOKEN)
+            MockBuilder.return_value.token.return_value.concurrent_updates.assert_called_once_with(True)
 
 
 class TestVoiceAndOwner(unittest.TestCase):
@@ -105,12 +107,13 @@ class TestVoiceAndOwner(unittest.TestCase):
     def _make(self, transcript="", owner_id="", user_id=42, transcribe_exc=None, username=None):
         from clients.telegram.main import _Bot
         with patch("clients.telegram.main.OrchestratorAgent") as MockAgent, \
+                patch("clients.telegram.main.ApplicationBuilder"), \
                 patch("clients.telegram.main.Transcriber") as MockTr, \
                 patch("clients.telegram.main.Config") as MockCfg:
             MockCfg.TELEGRAM_OWNER_ID = owner_id
             MockCfg.TELEGRAM_BOT_TOKEN = "t"
             bot = _Bot()
-        bot.local_agent.ask = MagicMock(return_value="Logged €90…")
+        bot.local_agent.aask = AsyncMock(return_value="Logged €90…")
         tr = bot.transcriber
         if transcribe_exc:
             tr.transcribe = MagicMock(side_effect=transcribe_exc)
@@ -152,32 +155,32 @@ class TestVoiceAndOwner(unittest.TestCase):
         bot, update, context, sent, o = self._make(transcript="Colruyt 90 euros today")
         self._run(bot._handle_voice, bot, update, context, o)
         sent.edit_text.assert_awaited_with("🎤 You said: Colruyt 90 euros today\n\nLogged €90…")
-        self.assertEqual(bot.local_agent.ask.call_args.args[0], "Colruyt 90 euros today")
+        self.assertEqual(bot.local_agent.aask.call_args.args[0], "Colruyt 90 euros today")
 
     def test_empty_transcript_asks_to_retry(self):
         bot, update, context, sent, o = self._make(transcript="")
         self._run(bot._handle_voice, bot, update, context, o)
-        bot.local_agent.ask.assert_not_called()
+        bot.local_agent.aask.assert_not_called()
         update.effective_message.reply_text.assert_awaited_once_with(
             "🎤 I couldn't hear anything — please try again or type it.")
 
     def test_transcription_error_replies_sorry(self):
         bot, update, context, sent, o = self._make(transcribe_exc=RuntimeError("boom"))
         self._run(bot._handle_voice, bot, update, context, o)
-        bot.local_agent.ask.assert_not_called()
+        bot.local_agent.aask.assert_not_called()
         update.effective_message.reply_text.assert_awaited_once_with(
             "Sorry, I couldn't transcribe that voice note. Please try again or type it.")
 
     def test_owner_flag_true_for_owner_id(self):
         bot, update, context, sent, o = self._make(owner_id="42", user_id=42)
         self._run(bot._handle_message, bot, update, context, o)
-        self.assertIs(bot.local_agent.ask.call_args.kwargs["is_owner"], True)
+        self.assertIs(bot.local_agent.aask.call_args.kwargs["is_owner"], True)
 
     def test_owner_flag_false_when_unset_or_other_user(self):
         for owner_id, uid in (("", 42), ("99", 42)):
             bot, update, context, sent, o = self._make(owner_id=owner_id, user_id=uid)
             self._run(bot._handle_message, bot, update, context, o)
-            self.assertIs(bot.local_agent.ask.call_args.kwargs["is_owner"], False)
+            self.assertIs(bot.local_agent.aask.call_args.kwargs["is_owner"], False)
 
     def test_owner_id_tolerates_quotes_spaces_usernames_and_lists(self):
         for owner_id, uid, username in (
@@ -186,14 +189,14 @@ class TestVoiceAndOwner(unittest.TestCase):
         ):
             bot, update, context, sent, o = self._make(owner_id=owner_id, user_id=uid, username=username)
             self._run(bot._handle_message, bot, update, context, o)
-            self.assertIs(bot.local_agent.ask.call_args.kwargs["is_owner"], True, owner_id)
+            self.assertIs(bot.local_agent.aask.call_args.kwargs["is_owner"], True, owner_id)
 
     def test_owner_recognised_when_posting_as_channel(self):
         bot, update, context, sent, o = self._make(owner_id="-1001234")
         update.effective_user = None  # channel posts carry no user, only the sender chat
         update.effective_sender = MagicMock(id=-1001234, username=None)
         self._run(bot._handle_message, bot, update, context, o)
-        self.assertIs(bot.local_agent.ask.call_args.kwargs["is_owner"], True)
+        self.assertIs(bot.local_agent.aask.call_args.kwargs["is_owner"], True)
 
     def test_whoami_shows_ids_and_owner_status(self):
         bot, update, context, sent, o = self._make(owner_id="42", user_id=42, username="UzairK")
@@ -204,7 +207,7 @@ class TestVoiceAndOwner(unittest.TestCase):
 
     def test_ask_error_still_replies_sorry(self):
         bot, update, context, sent, o = self._make()
-        bot.local_agent.ask = MagicMock(side_effect=RuntimeError("x"))
+        bot.local_agent.aask = AsyncMock(side_effect=RuntimeError("x"))
         self._run(bot._handle_message, bot, update, context, o)
         sent.edit_text.assert_awaited_with("Sorry, something went wrong. Please try again.")
 

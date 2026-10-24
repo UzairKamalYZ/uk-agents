@@ -11,6 +11,12 @@ LocalAgent, which exposes:
 OrchestratorAgent provides the exact same interface so every client can switch
 to the multi-agent pipeline by changing one import line — nothing else changes.
 
+ASYNC
+-----
+aask() / astream() are the async twins used by clients that run an event loop
+(REST, Telegram).  The graph itself runs on its own background loop, so both
+the sync and async methods can be called from anywhere.
+
 STREAMING NOTE
 --------------
 _stream_tokens() delegates to MultiAgentGraph.stream_tokens(), which uses
@@ -21,7 +27,7 @@ out so only the final synthesis reaches the caller.
 from __future__ import annotations
 
 import logging
-from typing import Generator
+from typing import AsyncIterator, Generator
 
 from langsmith import traceable
 
@@ -92,6 +98,31 @@ class OrchestratorAgent:
         # Blocking path — run the full graph and return the final string
         return self._graph.ask(prompt, session_id=session_id, is_owner=is_owner)
 
+    @traceable(
+        name="orchestrator.request",
+        run_type="chain",
+        tags=["orchestrator"],
+    )
+    async def aask(
+        self,
+        prompt: str,
+        session_id: str = "default",
+        *,
+        is_owner: bool = False,
+    ) -> str:
+        """Async ask() for clients running an event loop (REST, Telegram)."""
+        return await self._graph.aask(prompt, session_id=session_id, is_owner=is_owner)
+
+    def astream(
+        self,
+        prompt: str,
+        session_id: str = "default",
+        *,
+        is_owner: bool = False,
+    ) -> AsyncIterator[str]:
+        """Async generator of answer tokens as the synthesiser writes them."""
+        return self._graph.astream_tokens(prompt, session_id=session_id, is_owner=is_owner)
+
     def _stream_tokens(
         self, prompt: str, session_id: str, is_owner: bool = False
     ) -> Generator[str, None, None]:
@@ -110,7 +141,8 @@ class OrchestratorAgent:
         yield from self._graph.stream_tokens(prompt, session_id=session_id, is_owner=is_owner)
 
     def close(self) -> None:
-        """No persistent resources to release — graph is stateless between calls."""
+        """Close the checkpointer and stop the orchestrator's event loop."""
+        self._graph.close()
 
     def __enter__(self):
         return self

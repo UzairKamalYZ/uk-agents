@@ -92,11 +92,11 @@ class TestSseFormatter(unittest.TestCase):
 
 
 class TestAskEndpoint(unittest.TestCase):
-    """/ask runs the blocking agent off the event loop and keeps sessions apart."""
+    """/ask awaits the async agent API and keeps sessions apart."""
 
     def setUp(self):
         self.agent = MagicMock()
-        self.agent.ask.return_value = "answer"
+        self.agent.aask = AsyncMock(return_value="answer")
 
     def _ask(self, prompt="hi", stream=False, session_id=None):
         from clients.rest.main import _ask
@@ -104,26 +104,68 @@ class TestAskEndpoint(unittest.TestCase):
 
     def test_should_pass_given_session_id_and_return_it(self):
         self.assertEqual(self._ask(session_id="abc"), {"response": "answer", "session_id": "abc"})
-        self.agent.ask.assert_called_once_with("hi", stream=False, session_id="abc")
+        self.agent.aask.assert_awaited_once_with("hi", session_id="abc")
+        self.agent.ask.assert_not_called()
 
     def test_should_use_a_fresh_session_per_request_when_none_given(self):
         first, second = self._ask()["session_id"], self._ask()["session_id"]
         self.assertNotEqual(first, second)
         self.assertNotEqual(first, "default")
 
-    def test_should_not_run_agent_on_event_loop_thread(self):
-        import threading
-        threads = []
-        self.agent.ask.side_effect = lambda *a, **k: threads.append(threading.current_thread()) or "x"
-        self._ask()
-        self.assertIsNot(threads[0], threading.main_thread())
-
     @patch("clients.rest.main.StreamingResponse")
     def test_should_stream_with_session_header(self, MockResponse):
         self._ask(stream=True, session_id="s")
-        self.agent.ask.assert_called_once_with("hi", stream=True, session_id="s")
+        self.agent.astream.assert_called_once_with("hi", session_id="s")
         self.assertEqual(MockResponse.call_args.kwargs["headers"], {"X-Session-Id": "s"})
+
+    def test_sse_formatter_accepts_async_iterators(self):
+        async def tokens():
+            yield "a"
+            yield "b"
+
+        async def collect():
+            return [chunk async for chunk in sse_formatter(tokens())]
+
+        self.assertEqual(asyncio.run(collect()), ["data: a\n\n", "data: b\n\n"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHttpEndpoint(unittest.TestCase):
+    """The real FastAPI app over HTTP (lifespan not started; a fake agent is installed)."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        self.agent = MagicMock()
+        self.agent.aask = AsyncMock(return_value="answer")
+
+        async def tokens(prompt, session_id=None):
+            yield "tok1"
+            yield "tok2"
+
+        self.agent.astream = MagicMock(side_effect=tokens)
+        app.state.agent = self.agent
+        self.client = TestClient(app)
+        # Never depend on an API_KEY from a developer's .env
+        patcher = patch("clients.rest.main.Config")
+        patcher.start().API_KEY = ""
+        self.addCleanup(patcher.stop)
+
+    def test_get_ask_returns_answer_and_session(self):
+        body = self.client.get("/ask", params={"prompt": "hi", "session_id": "s"}).json()
+        self.assertEqual(body, {"response": "answer", "session_id": "s"})
+
+    def test_get_ask_streams_sse(self):
+        resp = self.client.get("/ask", params={"prompt": "hi", "stream": "true", "session_id": "s"})
+        self.assertEqual(resp.headers["content-type"].split(";")[0], "text/event-stream")
+        self.assertEqual(resp.headers["x-session-id"], "s")
+        self.assertEqual(resp.text, "data: tok1\n\ndata: tok2\n\n")
+
+    def test_api_key_is_enforced_when_configured(self):
+        from clients.rest import main
+        main.Config.API_KEY = "secret"
+        self.assertEqual(self.client.get("/ask", params={"prompt": "hi"}).status_code, 401)
+        ok = self.client.get("/ask", params={"prompt": "hi"}, headers={"X-API-Key": "secret"})
+        self.assertEqual(ok.status_code, 200)

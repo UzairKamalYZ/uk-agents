@@ -54,19 +54,24 @@ it up automatically on the next startup.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-import sqlite3
+import weakref
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
+
 from langchain_core.messages import AIMessageChunk, RemoveMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Command
 
+from core.src.aio import BackgroundLoop
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
 from core.src.utils import load_prompt
@@ -273,16 +278,21 @@ class MultiAgentGraph:
         # -----------------------------------------------------------------
         # 6. Compile — LangGraph validates the graph topology here
         # -----------------------------------------------------------------
-        self._checkpointer = checkpointer or self._sqlite_checkpointer()
+        # The graph runs on its own event loop: the aiosqlite checkpointer must
+        # stay on one loop, and sync + async callers can then both use it.
+        self._runtime = BackgroundLoop("orchestrator-loop")
+        self._owns_checkpointer = checkpointer is None
+        self._checkpointer = checkpointer or self._runtime.run(self._open_sqlite_checkpointer())
         self._graph = builder.compile(checkpointer=self._checkpointer)
+        # One run at a time per session (created and used only on the runtime loop)
+        self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         logger.info("[MultiAgentGraph] compiled with agents: %s", sorted(agent_names))
 
     @staticmethod
-    def _sqlite_checkpointer() -> SqliteSaver:
+    async def _open_sqlite_checkpointer() -> AsyncSqliteSaver:
         path = Path(Config.CHECKPOINT_DB_FILE)
         path.parent.mkdir(parents=True, exist_ok=True)
-        # SqliteSaver serialises access with its own lock, so one shared connection is safe
-        return SqliteSaver(sqlite3.connect(path, check_same_thread=False))
+        return AsyncSqliteSaver(await aiosqlite.connect(path))
 
     # ------------------------------------------------------------------
     # Public interface
@@ -309,15 +319,25 @@ class MultiAgentGraph:
     def _config(thread_id: str) -> dict:
         return {"configurable": {"thread_id": thread_id}}
 
-    def _pending_interrupt(self, thread_id: str) -> dict | None:
+    # ------------------------------------------------------------------
+    # Run lifecycle (coroutines — always on the runtime loop)
+    # ------------------------------------------------------------------
+
+    def _session_lock(self, session_id: str) -> asyncio.Lock:
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            lock = self._session_locks[session_id] = asyncio.Lock()
+        return lock
+
+    async def _pending_interrupt(self, thread_id: str) -> dict | None:
         """The payload of the interrupt this thread is paused on, if any."""
-        interrupts = self._graph.get_state(self._config(thread_id)).interrupts
+        interrupts = (await self._graph.aget_state(self._config(thread_id))).interrupts
         return interrupts[0].value if interrupts else None
 
-    def _start(self, user_input: str, session_id: str, is_owner: bool) -> tuple[Any, dict]:
+    async def _start(self, user_input: str, session_id: str, is_owner: bool) -> tuple[Any, dict]:
         """(graph input, config) for this message: resume a paused thread, or start fresh."""
-        paused = self._pending_interrupt(session_id)
-        if paused is not None and not self._still_pending(paused.get("agent"), session_id):
+        paused = await self._pending_interrupt(session_id)
+        if paused is not None and not await asyncio.to_thread(self._still_pending, paused.get("agent"), session_id):
             # Resolved some other way while paused — this message starts a new turn
             logger.info("[MultiAgentGraph] %s: pending item on %s is gone — fresh turn",
                         session_id, paused.get("agent"))
@@ -329,12 +349,12 @@ class MultiAgentGraph:
                 logger.info("[MultiAgentGraph] %s paused on owner-only %s — non-owner turn on side thread",
                             session_id, paused.get("agent"))
                 thread_id = f"{session_id}#guest"
-                self._checkpointer.delete_thread(thread_id)
+                await self._checkpointer.adelete_thread(thread_id)
                 return self._initial_state(user_input, session_id, is_owner), self._config(thread_id)
             logger.info("[MultiAgentGraph] resuming %s (pending on %s)", session_id, paused.get("agent"))
             return Command(resume=user_input, update={"is_owner": is_owner}), self._config(session_id)
         # Nothing paused: drop any leftovers from a run that crashed mid-way
-        self._checkpointer.delete_thread(session_id)
+        await self._checkpointer.adelete_thread(session_id)
         return self._initial_state(user_input, session_id, is_owner), self._config(session_id)
 
     def _still_pending(self, agent_name: str | None, session_id: str) -> bool:
@@ -347,68 +367,90 @@ class MultiAgentGraph:
             logger.exception("[MultiAgentGraph] pending_summary failed for %s — not resuming", agent_name)
             return False
 
-    def _finish(self, config: dict) -> None:
+    async def _finish(self, config: dict) -> None:
         """Keep a thread only while it is paused for a confirmation."""
         thread_id = config["configurable"]["thread_id"]
-        if self._pending_interrupt(thread_id) is None:
-            self._checkpointer.delete_thread(thread_id)
+        if await self._pending_interrupt(thread_id) is None:
+            await self._checkpointer.adelete_thread(thread_id)
 
-    def stream(self, user_input: str, session_id: str = "default", *, is_owner: bool = False):
+    async def _run_ask(self, user_input: str, session_id: str, is_owner: bool) -> str:
         """
-        Run the pipeline (or resume a paused one) and yield LangGraph update-event dicts.
-
-        Each yielded event is {"node_name": {state_delta}} — one dict per
-        node execution.  Used internally by ask() to collect the final state.
-        """
-        graph_input, config = self._start(user_input, session_id, is_owner)
-        try:
-            yield from self._graph.stream(graph_input, config, stream_mode="updates")
-        finally:
-            self._finish(config)
-
-    def stream_tokens(self, user_input: str, session_id: str = "default", *, is_owner: bool = False):
-        """
-        Yield text tokens from the synthesiser LLM as they are generated.
-        """
-        graph_input, config = self._start(user_input, session_id, is_owner)
-
-        # stream_mode="messages" yields (message, metadata) tuples as they happen:
-        # AIMessageChunk tokens while the synthesiser LLM writes, plus the complete
-        # AIMessage each node returns.  metadata["langgraph_node"] names the node.
-        # The synthesiser can run more than once per call (e.g. confirm, then the
-        # next question), so "already streamed" is tracked per synthesiser run.
-        streamed_runs: set[str] = set()
-        try:
-            for chunk, metadata in self._graph.stream(graph_input, config, stream_mode="messages"):
-                if metadata.get("langgraph_node") != "synthesiser":
-                    continue
-                run = metadata.get("langgraph_checkpoint_ns", "")
-                # The final message repeats the streamed tokens — only use it when
-                # nothing was streamed (single-agent passthrough makes no LLM call).
-                if isinstance(chunk, AIMessageChunk):
-                    streamed_runs.add(run)
-                elif run in streamed_runs:
-                    continue
-                # .text skips thinking / tool-call blocks (empty for those chunks)
-                if chunk.text:
-                    yield chunk.text
-        finally:
-            self._finish(config)
-
-    def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
-        """
-        Blocking call — runs the pipeline (or resumes it) and returns the synthesiser's answer.
+        Run the pipeline (or resume it) and return the synthesiser's answer.
 
         The synthesiser stores its answer in agent_outputs["synthesiser"]; the
-        last one written during this call is the reply (a run that pauses for
+        last one written during this run is the reply (a run that pauses for
         a confirmation has already answered with the agent's question).
         """
-        answer = ""
-        for event in self.stream(user_input, session_id=session_id, is_owner=is_owner):
-            update = event.get("synthesiser")
-            if isinstance(update, dict):
-                answer = update.get("agent_outputs", {}).get("synthesiser", answer)
-
+        async with self._session_lock(session_id):
+            graph_input, config = await self._start(user_input, session_id, is_owner)
+            answer = ""
+            try:
+                async for event in self._graph.astream(graph_input, config, stream_mode="updates"):
+                    update = event.get("synthesiser")
+                    if isinstance(update, dict):
+                        answer = update.get("agent_outputs", {}).get("synthesiser", answer)
+            finally:
+                await self._finish(config)
         if not answer:
             logger.warning("[MultiAgentGraph] no synthesiser output in final state")
         return answer
+
+    async def _run_tokens(self, user_input: str, session_id: str, is_owner: bool) -> AsyncIterator[str]:
+        """Yield text tokens from the synthesiser LLM as they are generated."""
+        async with self._session_lock(session_id):
+            graph_input, config = await self._start(user_input, session_id, is_owner)
+            # stream_mode="messages" yields (message, metadata) tuples as they happen:
+            # AIMessageChunk tokens while the synthesiser LLM writes, plus the complete
+            # AIMessage each node returns.  metadata["langgraph_node"] names the node.
+            # The synthesiser can run more than once per call (e.g. confirm, then the
+            # next question), so "already streamed" is tracked per synthesiser run.
+            streamed_runs: set[str] = set()
+            try:
+                async for chunk, metadata in self._graph.astream(graph_input, config, stream_mode="messages"):
+                    if metadata.get("langgraph_node") != "synthesiser":
+                        continue
+                    run = metadata.get("langgraph_checkpoint_ns", "")
+                    # The final message repeats the streamed tokens — only use it when
+                    # nothing was streamed (single-agent passthrough makes no LLM call).
+                    if isinstance(chunk, AIMessageChunk):
+                        streamed_runs.add(run)
+                    elif run in streamed_runs:
+                        continue
+                    # .text skips thinking / tool-call blocks (empty for those chunks)
+                    if chunk.text:
+                        yield chunk.text
+            finally:
+                await self._finish(config)
+
+    # ------------------------------------------------------------------
+    # Public interface — async (REST, Telegram) and sync (cron, scripts)
+    # ------------------------------------------------------------------
+
+    async def aask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
+        """Answer one message. Messages on the same session are handled one at a time."""
+        return await self._runtime.arun(self._run_ask(user_input, session_id, is_owner))
+
+    async def astream_tokens(
+        self, user_input: str, session_id: str = "default", *, is_owner: bool = False
+    ) -> AsyncIterator[str]:
+        """Async generator of answer tokens as the synthesiser writes them."""
+        async for token in self._runtime.aiterate(self._run_tokens(user_input, session_id, is_owner)):
+            yield token
+
+    def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
+        """Blocking aask() for sync callers."""
+        return self._runtime.run(self._run_ask(user_input, session_id, is_owner))
+
+    def stream_tokens(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> Iterator[str]:
+        """Blocking astream_tokens() for sync callers."""
+        yield from self._runtime.iterate(self._run_tokens(user_input, session_id, is_owner))
+
+    def pending_interrupt(self, session_id: str) -> dict | None:
+        """What this session is paused on (agent, summary, owner_only), or None."""
+        return self._runtime.run(self._pending_interrupt(session_id))
+
+    def close(self) -> None:
+        """Close the checkpointer connection (if this graph opened it) and stop the loop."""
+        if self._owns_checkpointer:
+            self._runtime.run(self._checkpointer.conn.close())
+        self._runtime.stop()

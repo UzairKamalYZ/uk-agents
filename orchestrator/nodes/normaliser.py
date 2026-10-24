@@ -64,12 +64,13 @@ class NormaliserNode:
     # LangGraph interface — called as normaliser_node(state)
     # ------------------------------------------------------------------
 
-    def __call__(self, state: GraphState) -> dict[str, Any]:
+    async def __call__(self, state: GraphState) -> dict[str, Any]:
         raw = state.get("raw_input") or state["user_input"]
         today = self._today()
         prompt = self._prompt_template.replace("{today}", f"{today.isoformat()} ({today.strftime('%A')})")
         try:
-            text = self._llm.invoke([SystemMessage(content=prompt), HumanMessage(content=raw)]).text.strip()
+            reply = await self._llm.ainvoke([SystemMessage(content=prompt), HumanMessage(content=raw)])
+            text = reply.text.strip()
         except Exception:
             logger.exception("[normaliser] LLM call failed — passing raw input through")
             return {"user_input": raw}

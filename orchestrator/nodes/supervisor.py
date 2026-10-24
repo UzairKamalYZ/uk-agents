@@ -63,7 +63,7 @@ class SupervisorNode:
     # LangGraph interface — called as supervisor_node(state)
     # ------------------------------------------------------------------
 
-    def __call__(self, state: GraphState) -> dict[str, Any]:
+    async def __call__(self, state: GraphState) -> dict[str, Any]:
         agent_outputs_text = (
             "\n\n".join(
                 f"[{name}]:\n{output}"
@@ -83,7 +83,7 @@ class SupervisorNode:
             )),
         ]
         try:
-            next_agent = self._llm.invoke(messages).next
+            next_agent = (await self._llm.ainvoke(messages)).next
         except Exception:
             logger.exception("[supervisor] routing call failed — defaulting to FINISH")
             next_agent = FINISH

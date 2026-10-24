@@ -84,6 +84,11 @@ class BaseAgent(ABC):
             return self.model.ask_stream(prompt, session_id=sid)
         return self.model.ask(prompt, session_id=sid)
 
+    async def aask(self, prompt: str, session_id: str = None) -> str:
+        """Async ask() — what the orchestrator calls. Blocking answer, no streaming."""
+        logger.info("[%s] BaseAgent.aask() entered", self.__class__.__name__)
+        return await self.model.aask(prompt, session_id=session_id or self.session_id)
+
     # Pending-confirmation hooks — no-ops unless an agent keeps pending state.
 
     def pending_summary(self, session_id: str) -> str | None:

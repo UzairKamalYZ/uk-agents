@@ -69,6 +69,15 @@ def test_ask_prefixes_today(agent):
     agent.model.ask.assert_called_once_with("Today is 2026-10-18 (Sunday).\n\nColruyt 90", session_id="x")
 
 
+def test_aask_prefixes_today_and_logs_input(agent, tmp_path):
+    import asyncio
+    from unittest.mock import AsyncMock
+    agent.model.aask = AsyncMock(return_value="ok")
+    assert asyncio.run(agent.aask("Colruyt 90", session_id="x")) == "ok"
+    agent.model.aask.assert_awaited_once_with("Today is 2026-10-18 (Sunday).\n\nColruyt 90", session_id="x")
+    assert (tmp_path / "inputs.log").read_text().endswith("| Colruyt 90\n")
+
+
 def test_every_input_is_logged(agent, tmp_path):
     agent.model.ask.return_value = "ok"
     agent.ask("Colruyt 90", session_id="x")
@@ -98,4 +107,7 @@ def test_ask_without_tools_refuses_without_calling_model(tmp_path, caplog):
     assert "expenses" in caplog.text
     assert a.ask("Colruyt 90").startswith("⚠️ Expense tracking is unavailable right now — nothing was saved.")
     a.model.ask.assert_not_called()
+    import asyncio
+    assert asyncio.run(a.aask("Colruyt 90")).startswith("⚠️ Expense tracking is unavailable")
+    a.model.aask.assert_not_called()
     assert "Colruyt 90" in (tmp_path / "inputs.log").read_text()

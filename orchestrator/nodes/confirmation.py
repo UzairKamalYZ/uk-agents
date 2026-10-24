@@ -36,6 +36,7 @@ Usage
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
 from typing import Any, Callable, Literal
@@ -96,11 +97,11 @@ class ConfirmationNode:
     # LangGraph interface — called as confirmation_node(state)
     # ------------------------------------------------------------------
 
-    def __call__(self, state: GraphState) -> dict[str, Any]:
+    async def __call__(self, state: GraphState) -> dict[str, Any]:
         name = state.get("awaiting")
         session_id = state.get("session_id", "default")
         entry = self._agents.get(name)
-        summary = self._pending_summary(entry, session_id) if entry else None
+        summary = await asyncio.to_thread(self._pending_summary, entry, session_id) if entry else None
         if summary is None:
             return {"awaiting": None, "next": END}
 
@@ -109,7 +110,7 @@ class ConfirmationNode:
 
         # ---- resumed with the user's next message ----
         fresh_turn = {"raw_input": reply, "user_input": reply, "agent_outputs": {}, "turns": 0, "direct": False}
-        classified = self._classify(reply, summary)
+        classified = await self._classify(reply, summary)
         if classified is None:
             return {**fresh_turn, "agent_outputs": {name: REASK_REPLY.format(summary=summary)},
                     "awaiting": name, "next": "synthesiser"}
@@ -124,9 +125,10 @@ class ConfirmationNode:
 
         try:
             if verdict == "confirm":
-                return {**fresh_turn, "agent_outputs": {name: agent.confirm_pending(session_id)},
+                saved = await asyncio.to_thread(agent.confirm_pending, session_id)
+                return {**fresh_turn, "agent_outputs": {name: saved},
                         "awaiting": name, "next": "synthesiser"}
-            agent.discard_pending(session_id)
+            await asyncio.to_thread(agent.discard_pending, session_id)
         except Exception:
             logger.exception("[confirmation] %s failed resolving pending item (verdict=%s)", name, verdict)
             return {**fresh_turn, "agent_outputs": {name: PENDING_ERROR_REPLY}, "awaiting": name,
@@ -150,7 +152,7 @@ class ConfirmationNode:
             logger.exception("[confirmation] pending_summary failed for %s — treating as none", entry.name)
             return None
 
-    def _classify(self, reply: str, summary: str) -> ConfirmationReply | None:
+    async def _classify(self, reply: str, summary: str) -> ConfirmationReply | None:
         today = self._today()
         prompt = (
             self._prompt_template
@@ -158,7 +160,7 @@ class ConfirmationNode:
             .replace("{today}", f"{today.isoformat()} ({today.strftime('%A')})")
         )
         try:
-            return self._llm.invoke([SystemMessage(content=prompt), HumanMessage(content=reply)])
+            return await self._llm.ainvoke([SystemMessage(content=prompt), HumanMessage(content=reply)])
         except Exception:
             logger.exception("[confirmation] classification failed — re-asking")
             return None

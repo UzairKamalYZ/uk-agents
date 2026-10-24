@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import date
 from pathlib import Path
@@ -44,9 +45,17 @@ class ExpenditureAgent(BaseAgent):
         self._log_input(prompt)
         if not self._tools_available:
             return iter([UNAVAILABLE_REPLY]) if stream else UNAVAILABLE_REPLY
+        return super().ask(self._dated(prompt), stream=stream, session_id=session_id)
+
+    async def aask(self, prompt: str, session_id: str = None) -> str:
+        await asyncio.to_thread(self._log_input, prompt)
+        if not self._tools_available:
+            return UNAVAILABLE_REPLY
+        return await super().aask(self._dated(prompt), session_id=session_id)
+
+    def _dated(self, prompt: str) -> str:
         today = self._today()
-        dated = f"Today is {today.isoformat()} ({today.strftime('%A')}).\n\n{prompt}"
-        return super().ask(dated, stream=stream, session_id=session_id)
+        return f"Today is {today.isoformat()} ({today.strftime('%A')}).\n\n{prompt}"
 
     # Single owner: session_id is ignored for pending state.
 

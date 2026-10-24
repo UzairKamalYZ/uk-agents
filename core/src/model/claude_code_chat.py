@@ -123,7 +123,7 @@ class ChatClaudeCode(BaseChatModel):
     def _to_sdk_tool(tool: BaseTool) -> SdkMcpTool:
         async def handler(args: dict) -> dict:
             try:
-                result = await asyncio.to_thread(tool.invoke, args)
+                result = await tool.ainvoke(args)
                 return {"content": [{"type": "text", "text": str(result)}]}
             except Exception as e:
                 logger.error("claude-code tool '%s' failed: %s", tool.name, e)

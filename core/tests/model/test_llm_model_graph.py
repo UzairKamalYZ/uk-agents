@@ -1,5 +1,7 @@
+import asyncio
+import threading
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
 
@@ -212,6 +214,88 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertEqual(result["answer"], "1 PLN = 0.25 USD")
 
     # ------------------------------------------------------------------
+    # Async path: aask(), _agenerate_node(), _aretrieve_node()
+    # ------------------------------------------------------------------
+
+    def test_aask_returns_answer_and_records_history(self):
+        self.model.graph.ainvoke = AsyncMock(return_value={"answer": "async answer"})
+        answer = asyncio.run(self.model.aask("find a flat", session_id="as1"))
+        self.assertEqual(answer, "async answer")
+        self.assertEqual([m.content for m in self._hist("as1")], ["find a flat", "async answer"])
+
+    def test_aask_passes_history_into_the_next_turn(self):
+        self.model.graph.ainvoke = AsyncMock(side_effect=[{"answer": "a1"}, {"answer": "a2"}])
+        asyncio.run(self.model.aask("q1", session_id="as2"))
+        asyncio.run(self.model.aask("q2", session_id="as2"))
+        second_state = self.model.graph.ainvoke.call_args_list[1][0][0]
+        self.assertEqual([m.content for m in second_state["session_history"]], ["q1", "a1"])
+
+    def test_async_generate_awaits_llm_and_tools(self):
+        tool_call = {"id": "call_1", "name": "currency_convert", "args": {"amount": 1.0}}
+        self.mock_llm.ainvoke = AsyncMock(side_effect=[
+            AIMessage(content="", tool_calls=[tool_call]),
+            AIMessage(content="1 PLN = 0.25 USD"),
+        ])
+        mock_tool = MagicMock()
+        mock_tool.name = "currency_convert"
+        mock_tool.ainvoke = AsyncMock(return_value="0.25 USD")
+        self.model._tools = [mock_tool]
+
+        result = asyncio.run(self.model._agenerate_node(self._make_state()))
+
+        mock_tool.ainvoke.assert_awaited_once_with({"amount": 1.0})
+        mock_tool.invoke.assert_not_called()
+        self.mock_llm.invoke.assert_not_called()
+        self.assertEqual(result["answer"], "1 PLN = 0.25 USD")
+        tool_message = self.mock_llm.ainvoke.call_args_list[1][0][0][-1]
+        self.assertEqual((tool_message.content, tool_message.tool_call_id), ("0.25 USD", "call_1"))
+
+    def test_async_generate_runs_tool_calls_of_one_turn_concurrently(self):
+        calls = [{"id": f"c{i}", "name": "slow", "args": {}} for i in range(3)]
+        self.mock_llm.ainvoke = AsyncMock(side_effect=[
+            AIMessage(content="", tool_calls=calls), AIMessage(content="done"),
+        ])
+        running, peak = 0, 0
+
+        async def slow(_args):
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.05)
+            running -= 1
+            return "ok"
+
+        tool = MagicMock()
+        tool.name = "slow"
+        tool.ainvoke = slow
+        self.model._tools = [tool]
+        asyncio.run(self.model._agenerate_node(self._make_state()))
+        self.assertEqual(peak, 3)
+
+    def test_async_tool_error_becomes_message_for_the_llm(self):
+        tool = MagicMock()
+        tool.name = "broken"
+        tool.ainvoke = AsyncMock(side_effect=RuntimeError("nope"))
+        self.model._tools = [tool]
+        self.assertEqual(asyncio.run(self.model._ainvoke_tool("broken", {})), "Error executing tool broken: nope")
+        self.assertEqual(asyncio.run(self.model._ainvoke_tool("missing", {})), "Tool 'missing' not found.")
+
+    def test_async_retrieve_runs_rag_off_the_event_loop(self):
+        threads = []
+        self.model.rag_context_manager.get_context.side_effect = (
+            lambda prompt: threads.append(threading.current_thread()) or "ctx"
+        )
+
+        async def run():
+            loop_thread = threading.current_thread()
+            result = await self.model._aretrieve_node(self._make_state())
+            return loop_thread, result
+
+        loop_thread, result = asyncio.run(run())
+        self.assertEqual(result, {"context": "ctx"})
+        self.assertIsNot(threads[0], loop_thread)
+
+    # ------------------------------------------------------------------
     # _initial_state()
     # ------------------------------------------------------------------
 
@@ -251,3 +335,19 @@ class TestLlmModelGraph(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_compiled_graph_runs_both_sync_and_async_nodes():
+    """The real compiled graph: invoke() uses the sync nodes, ainvoke() the async ones."""
+    with patch("core.src.model.llm_model_graph._mcp") as mcp:
+        mcp.langchain_tools.return_value = []
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(content="sync")
+        llm.ainvoke = AsyncMock(return_value=AIMessage(content="async"))
+        rag = MagicMock()
+        rag.get_context.return_value = ""
+        model = LlmModelGraph(llm, system_prompt="p", rag_context_manager=rag)
+    assert model.ask("q", session_id="s") == "sync"
+    assert asyncio.run(model.aask("q", session_id="s")) == "async"
+    llm.invoke.assert_called_once()
+    llm.ainvoke.assert_awaited_once()
