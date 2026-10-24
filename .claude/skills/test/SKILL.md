@@ -1,17 +1,16 @@
 Run the full test suite for this project.
 
 ```bash
-cd /Users/uzairkamal/work/my-property-agent && python -m pytest agentP/tests/ clients/tests/ -v --tb=short
+uv run python -m pytest -v --tb=short
 ```
 
-Test locations:
-- `agentP/tests/model/test_embedder.py` — Embedder unit tests
-- `agentP/tests/model/test_llm_model_graph.py` — LlmModelGraph unit tests
-- `clients/tests/test_base_client.py` — BaseClient tests
-- `clients/tests/test_rest_client.py` — REST client tests
-- `clients/tests/test_cron_client.py` — Cron client tests
-- `clients/tests/test_telegram_client.py` — Telegram client tests
-- `clients/tests/test_streamlit_client.py` — Streamlit client tests
+Run it from the project root; no `.env` is needed.
+
+Test locations (see `testpaths` in `pyproject.toml`):
+- `core/tests/` — BaseAgent, LlmModelGraph, MCP client, Claude Code backend, history store, embedder, transcriber
+- `orchestrator/tests/` — graph routing, confirmations (interrupt/resume), normaliser, agent nodes, registry
+- `clients/tests/` — REST, Telegram, cron, Streamlit and BaseClient
+- `agents/<name>/tests/` — per-agent tests (expenditure ledger / MCP server / agent, property tools)
 
 Run the bash command above and report:
 1. How many tests passed, failed, and were skipped

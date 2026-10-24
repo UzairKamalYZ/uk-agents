@@ -212,14 +212,16 @@ python -m agentP.src.agent
 ### Running Tests
 
 ```bash
-# All tests
-python -m pytest agentP/tests/ clients/tests/ -v
+# All tests (testpaths in pyproject.toml: core, orchestrator, clients, agents/*/tests)
+uv run python -m pytest -q
 
 # With coverage
-python -m pytest agentP/tests/ clients/tests/ --cov=agentP/src --cov=clients --cov-report=term-missing
+uv run python -m pytest --cov=core --cov=orchestrator --cov=clients --cov=agents --cov-report=term-missing
 ```
 
-All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do not write tests that make real network or model calls.
+No `.env` is needed: every setting has a test-safe default. CI (`.github/workflows/tests.yml`) runs the same command on every push and pull request.
+
+All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do not write tests that make real network or model calls. Local stand-ins are fine — e.g. a Python script acting as an MCP server over stdio.
 
 ---
 

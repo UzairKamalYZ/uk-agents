@@ -9,6 +9,11 @@ _PROJECT_ROOT = Path(__file__).parents[3]
 load_dotenv(_PROJECT_ROOT / ".env")
 
 
+def _project_path(env_var: str, default: str) -> str:
+    """Path setting: relative values (and the default) resolve from the project root."""
+    return str(_PROJECT_ROOT / (os.getenv(env_var) or default))
+
+
 def _user_data_dir() -> Path:
     """Per-user data directory for uk-agents, outside the project (survives re-clones)."""
     if os.name == "nt":
@@ -37,9 +42,10 @@ class Config:
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-    PROMPT_FILE = os.path.join(os.getenv("PROMPT_FILE"))
-    INTERACTION_FILE = os.path.join(os.getenv("INTERACTION_FILE"))
-    REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
+    # Property agent prompts
+    PROMPT_FILE = _project_path("PROMPT_FILE", "agents/property/prompts/System_Prompt.txt")
+    INTERACTION_FILE = _project_path("INTERACTION_FILE", "agents/property/prompts/interaction.json")
+    REFORMULATION_PROMPT = _project_path("REFORMULATION_PROMPT", "agents/property/prompts/reformulated_prompt.txt")
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     # Telegram user id of the owner; only they can use the expense tracker
@@ -60,10 +66,10 @@ class Config:
     RAG_K = int(os.getenv("RAG_K", "5"))
     MAX_HISTORY_TURNS= os.getenv("MAX_HISTORY_TURNS", 10)
     # Orchestrator prompt files
-    SUPERVISOR_PROMPT_FILE = os.getenv("SUPERVISOR_PROMPT_FILE", "orchestrator/prompts/supervisor.txt")
-    SYNTHESISER_PROMPT_FILE = os.getenv("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
-    NORMALISER_PROMPT_FILE = os.getenv("NORMALISER_PROMPT_FILE", "orchestrator/prompts/normaliser.txt")
-    CONFIRMATION_PROMPT_FILE = os.getenv("CONFIRMATION_PROMPT_FILE", "orchestrator/prompts/confirmation.txt")
+    SUPERVISOR_PROMPT_FILE = _project_path("SUPERVISOR_PROMPT_FILE", "orchestrator/prompts/supervisor.txt")
+    SYNTHESISER_PROMPT_FILE = _project_path("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
+    NORMALISER_PROMPT_FILE = _project_path("NORMALISER_PROMPT_FILE", "orchestrator/prompts/normaliser.txt")
+    CONFIRMATION_PROMPT_FILE = _project_path("CONFIRMATION_PROMPT_FILE", "orchestrator/prompts/confirmation.txt")
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
     # Expense ledger + input log — kept outside the project in the user data dir;
