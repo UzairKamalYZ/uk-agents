@@ -89,6 +89,39 @@ class TestChatClaudeCode(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 ChatClaudeCode().invoke([HumanMessage(content="hi")])
 
+    def test_should_return_schema_instance_using_native_json_schema_output(self):
+        from pydantic import BaseModel
+
+        class Route(BaseModel):
+            next: str
+
+        result = _result("")
+        result.structured_output = {"next": "finance_agent"}
+        fake, calls = _fake_query(result)
+        with patch("core.src.model.claude_code_chat.query", fake):
+            out = ChatClaudeCode().with_structured_output(Route, method="json_schema").invoke(
+                [SystemMessage(content="route"), HumanMessage(content="AAPL?")]
+            )
+        self.assertEqual(out, Route(next="finance_agent"))
+        self.assertEqual(calls[0][1].output_format, {"type": "json_schema", "schema": Route.model_json_schema()})
+
+    def test_should_raise_when_structured_output_missing(self):
+        from pydantic import BaseModel
+
+        class Route(BaseModel):
+            next: str
+
+        fake, _ = _fake_query(_result("plain text"))
+        with patch("core.src.model.claude_code_chat.query", fake):
+            with self.assertRaises(RuntimeError):
+                ChatClaudeCode().with_structured_output(Route).invoke([HumanMessage(content="hi")])
+
+    def test_plain_calls_send_no_output_format(self):
+        fake, calls = _fake_query(_result("ok"))
+        with patch("core.src.model.claude_code_chat.query", fake):
+            ChatClaudeCode().invoke([HumanMessage(content="hi")])
+        self.assertIsNone(calls[0][1].output_format)
+
 
 if __name__ == "__main__":
     unittest.main()

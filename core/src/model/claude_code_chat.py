@@ -13,6 +13,7 @@ disabled — the model can only call the tools the agent was given.
 """
 
 import asyncio
+import json
 import logging
 from typing import Any
 
@@ -26,7 +27,9 @@ from claude_agent_sdk import (
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_core.tools import BaseTool
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,8 @@ class ChatClaudeCode(BaseChatModel):
     effort: str | None = None
     max_turns: int = 10
     bound_tools: list[BaseTool] = []
+    # JSON schema the reply must match (set via with_structured_output)
+    reply_schema: dict | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -47,6 +52,14 @@ class ChatClaudeCode(BaseChatModel):
 
     def bind_tools(self, tools: list, **kwargs: Any) -> "ChatClaudeCode":
         return self.model_copy(update={"bound_tools": list(tools)})
+
+    def with_structured_output(self, schema: type[BaseModel], **kwargs: Any) -> Runnable:
+        """Reply as an instance of `schema`, using Claude Code's native JSON-schema output.
+
+        Extra kwargs (e.g. method="json_schema") are accepted for ChatAnthropic parity.
+        """
+        llm = self.model_copy(update={"reply_schema": schema.model_json_schema()})
+        return llm | RunnableLambda(lambda message: schema.model_validate_json(message.text))
 
     # ------------------------------------------------------------------
     # BaseChatModel hooks
@@ -69,6 +82,10 @@ class ChatClaudeCode(BaseChatModel):
             raise RuntimeError(f"Claude Code request failed: {errors}")
 
         logger.info("claude-code → done (turns=%d, %d ms)", result.num_turns, result.duration_ms)
+        if self.reply_schema is not None:
+            if result.structured_output is None:
+                raise RuntimeError("Claude Code returned no structured output")
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=json.dumps(result.structured_output)))])
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=result.result or ""))])
 
     # ------------------------------------------------------------------
@@ -95,6 +112,9 @@ class ChatClaudeCode(BaseChatModel):
             strict_mcp_config=True,      # ignore the user's own MCP servers
             setting_sources=[],          # ignore user/project settings, hooks, CLAUDE.md
             permission_mode="dontAsk",   # anything not in allowed_tools is denied
+            output_format=(
+                {"type": "json_schema", "schema": self.reply_schema} if self.reply_schema else None
+            ),
             # .env is loaded into os.environ; blank the key so the CLI uses its own login
             env={"ANTHROPIC_API_KEY": ""},
         )

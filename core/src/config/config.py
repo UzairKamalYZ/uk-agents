@@ -52,6 +52,8 @@ class Config:
 
     # SQLite file for persistent session history (relative → from the project root)
     SESSION_DB_FILE = str(_PROJECT_ROOT / os.getenv("SESSION_DB_FILE", "sessions.db"))
+    # SQLite file where the orchestrator keeps conversations paused for a confirmation
+    CHECKPOINT_DB_FILE = str(_PROJECT_ROOT / os.getenv("CHECKPOINT_DB_FILE", "checkpoints.db"))
     # Selenium scraping browser connection string
     SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")
     # Number of listings to retrieve per RAG search
@@ -61,6 +63,7 @@ class Config:
     SUPERVISOR_PROMPT_FILE = os.getenv("SUPERVISOR_PROMPT_FILE", "orchestrator/prompts/supervisor.txt")
     SYNTHESISER_PROMPT_FILE = os.getenv("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
     NORMALISER_PROMPT_FILE = os.getenv("NORMALISER_PROMPT_FILE", "orchestrator/prompts/normaliser.txt")
+    CONFIRMATION_PROMPT_FILE = os.getenv("CONFIRMATION_PROMPT_FILE", "orchestrator/prompts/confirmation.txt")
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
     # Expense ledger + input log — kept outside the project in the user data dir;

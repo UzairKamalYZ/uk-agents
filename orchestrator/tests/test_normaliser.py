@@ -1,190 +1,60 @@
-import json
 from datetime import date
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
-from orchestrator.agent_registry import AgentEntry
-from orchestrator.nodes.normaliser import NormaliserNode
+from langchain_core.runnables import RunnableLambda
 
-TEMPLATE = "Today is {today}. Pending: {pending}"
-SUMMARY = "2026-10-18 | Colruyt | 90.00"
+from orchestrator.nodes.normaliser import NormalisedMessage, NormaliserNode
+
+TEMPLATE = "Today is {today}."
 
 
 class FakeLLM:
-    def __init__(self, text):
-        self.text = text
+    def __init__(self, reply):
+        self.reply = reply
         self.calls = []
+        self.schema = None
 
-    def invoke(self, messages):
-        self.calls.append(messages)
-        reply = MagicMock()
-        reply.text = self.text
-        return reply
+    def with_structured_output(self, schema, **kwargs):
+        self.schema = schema
+        self.kwargs = kwargs
 
+        def run(messages):
+            self.calls.append(messages)
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return schema(text=self.reply)
 
-def _entry(name, pending=None, owner_only=False):
-    inst = MagicMock()
-    inst.pending_summary.return_value = pending
-    inst.confirm_pending.return_value = f"Saved: {pending}"
-    return AgentEntry(name, "desc", inst, "anthropic", "m", owner_only=owner_only)
-
-
-def _reply(text, pending=None):
-    return json.dumps({"text": text, "pending": pending})
+        return RunnableLambda(run)
 
 
-def _state(raw="yes", is_owner=True):
-    return {"user_input": raw, "raw_input": raw, "session_id": "s1",
-            "agent_outputs": {}, "turns": 0, "is_owner": is_owner, "direct": False}
+def _state(raw):
+    return {"user_input": raw, "raw_input": raw, "session_id": "s1"}
 
 
-def _node(llm, agents):
-    return NormaliserNode(llm, TEMPLATE, agents, today=lambda: date(2026, 10, 18))
+def _node(llm):
+    return NormaliserNode(llm, TEMPLATE, today=lambda: date(2026, 10, 18))
 
 
-def test_cleans_text_without_pending():
-    llm = FakeLLM(_reply("Colruyt €90 on 2026-10-18"))
-    out = _node(llm, [_entry("conversational_agent")])(_state("colruit ninety euros today"))
+def test_cleans_text_with_structured_output():
+    llm = FakeLLM("Colruyt €90 on 2026-10-18")
+    out = _node(llm)(_state("colruit ninety euros today"))
     assert out == {"user_input": "Colruyt €90 on 2026-10-18"}
+    assert llm.schema is NormalisedMessage
+    assert llm.kwargs == {"method": "json_schema"}
     system, human = llm.calls[0]
-    assert "2026-10-18 (Sunday)" in system.content
-    assert "Pending: None" in system.content
+    assert system.content == "Today is 2026-10-18 (Sunday)."
     assert human.content == "colruit ninety euros today"
 
 
-def test_confirm_calls_confirm_pending():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    llm = FakeLLM(_reply("yes", "confirm"))
-    out = _node(llm, [_entry("conversational_agent"), exp])(_state())
-    exp.instance.confirm_pending.assert_called_once_with("s1")
-    assert out == {"agent_outputs": {"expenditure_tracker": f"Saved: {SUMMARY}"},
-                   "next": "synthesiser"}
-    assert SUMMARY in llm.calls[0][0].content
+def test_llm_error_passes_raw_through():
+    assert _node(FakeLLM(RuntimeError("down")))(_state("hi")) == {"user_input": "hi"}
 
 
-def test_cancel_discards():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    out = _node(FakeLLM(_reply("no", "cancel")), [exp])(_state("no"))
-    exp.instance.discard_pending.assert_called_once_with("s1")
-    exp.instance.confirm_pending.assert_not_called()
-    assert out == {"agent_outputs": {"expenditure_tracker": "Discarded."}, "next": "synthesiser"}
+def test_blank_cleaned_text_passes_raw_through():
+    assert _node(FakeLLM("   "))(_state("hi")) == {"user_input": "hi"}
 
 
-def test_correction_routes_direct_with_summary():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    out = _node(FakeLLM(_reply("it was €80", "correction")), [exp])(_state("it was eighty"))
-    assert out == {
-        "user_input": f"it was €80\n\n(Correction to the pending expense: {SUMMARY})",
-        "next": "expenditure_tracker",
-        "direct": True,
-    }
-    exp.instance.discard_pending.assert_not_called()
-
-
-def test_unrelated_discards_and_goes_to_supervisor():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    out = _node(FakeLLM(_reply("what is AAPL at?", "unrelated")), [exp])(_state("what is apple at"))
-    exp.instance.discard_pending.assert_called_once_with("s1")
-    assert out == {"user_input": "what is AAPL at?"}
-
-
-def test_null_while_pending_treated_as_unrelated():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    out = _node(FakeLLM(_reply("hello", None)), [exp])(_state("hello"))
-    exp.instance.discard_pending.assert_called_once_with("s1")
-    assert out == {"user_input": "hello"}
-
-
-REASK = (f"Sorry, I didn't catch that. Pending: {SUMMARY}. "
-         "Reply yes to save, no to discard, or send the corrected version.")
-
-
-def test_parse_failure_keeps_raw_and_pending():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    out = _node(FakeLLM("sorry, I cannot"), [exp])(_state("yes"))
-    assert out == {"agent_outputs": {"expenditure_tracker": REASK}, "next": "synthesiser"}
-    exp.instance.discard_pending.assert_not_called()
-    exp.instance.confirm_pending.assert_not_called()
-
-
-def test_parse_failure_without_pending_keeps_raw():
-    out = _node(FakeLLM("sorry, I cannot"), [_entry("conversational_agent")])(_state("helo"))
-    assert out == {"user_input": "helo"}
-
-
-def test_unknown_verdict_keeps_pending():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    out = _node(FakeLLM(_reply("yes", "maybe")), [exp])(_state("yes"))
-    assert out == {"agent_outputs": {"expenditure_tracker": REASK}, "next": "synthesiser"}
-    exp.instance.discard_pending.assert_not_called()
-    exp.instance.confirm_pending.assert_not_called()
-
-
-def test_verdict_is_case_and_space_insensitive():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    out = _node(FakeLLM(_reply("yes", " Confirm ")), [exp])(_state("yes"))
-    exp.instance.confirm_pending.assert_called_once_with("s1")
-    assert out["next"] == "synthesiser"
-
-
-def test_fenced_json_is_parsed():
-    llm = FakeLLM("```json\n" + _reply("hi there") + "\n```")
-    out = _node(llm, [_entry("conversational_agent")])(_state("hi ther"))
-    assert out == {"user_input": "hi there"}
-
-
-def test_llm_error_with_pending_reasks():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    llm = MagicMock()
-    llm.invoke.side_effect = RuntimeError("boom")
-    out = _node(llm, [exp])(_state("yes"))
-    assert out == {"agent_outputs": {"expenditure_tracker": REASK}, "next": "synthesiser"}
-    exp.instance.discard_pending.assert_not_called()
-
-
-def test_llm_error_without_pending_keeps_raw():
-    llm = MagicMock()
-    llm.invoke.side_effect = RuntimeError("boom")
-    out = _node(llm, [_entry("conversational_agent")])(_state("yes"))
-    assert out == {"user_input": "yes"}
-
-
-def test_owner_only_pending_ignored_for_non_owner():
-    exp = _entry("expenditure_tracker", SUMMARY, owner_only=True)
-    llm = FakeLLM(_reply("yes"))
-    out = _node(llm, [exp])(_state("yes", is_owner=False))
-    exp.instance.pending_summary.assert_not_called()
-    assert "Pending: None" in llm.calls[0][0].content
-    assert out == {"user_input": "yes"}
-
-
-ERROR = "Sorry, something went wrong with the pending item. Please try again."
-
-
-def test_pending_summary_error_treated_as_no_pending():
-    broken = _entry("expenditure_tracker")
-    broken.instance.pending_summary.side_effect = RuntimeError("corrupt")
-    llm = FakeLLM(_reply("hello"))
-    out = _node(llm, [broken])(_state("hello"))
-    assert out == {"user_input": "hello"}
-    assert "Pending: None" in llm.calls[0][0].content
-
-
-def test_confirm_error_replies_sorry():
-    e = _entry("expenditure_tracker", pending=SUMMARY)
-    e.instance.confirm_pending.side_effect = OSError("disk")
-    out = _node(FakeLLM(_reply("yes", "confirm")), [e])(_state())
-    assert out == {"agent_outputs": {"expenditure_tracker": ERROR}, "next": "synthesiser"}
-
-
-def test_cancel_error_replies_sorry():
-    e = _entry("expenditure_tracker", pending=SUMMARY)
-    e.instance.discard_pending.side_effect = OSError("disk")
-    out = _node(FakeLLM(_reply("no", "cancel")), [e])(_state("no"))
-    assert out == {"agent_outputs": {"expenditure_tracker": ERROR}, "next": "synthesiser"}
-
-
-def test_unrelated_discard_error_replies_sorry():
-    e = _entry("expenditure_tracker", pending=SUMMARY)
-    e.instance.discard_pending.side_effect = OSError("disk")
-    out = _node(FakeLLM(_reply("weather?", "unrelated")), [e])(_state("weather?"))
-    assert out == {"agent_outputs": {"expenditure_tracker": ERROR}, "next": "synthesiser"}
+def test_uses_raw_input_over_user_input():
+    llm = FakeLLM("x")
+    _node(llm)({"user_input": "already cleaned", "raw_input": "original"})
+    assert llm.calls[0][1].content == "original"

@@ -165,6 +165,8 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
 | `EXPENSES_DIR` | _(per-user data dir)_ | Expense ledger directory: monthly files, `inputs.log` (every message the expense agent received), history and pending item. Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
 | `NORMALISER_PROMPT_FILE` | `orchestrator/prompts/normaliser.txt` | Orchestrator normaliser prompt path |
+| `CONFIRMATION_PROMPT_FILE` | `orchestrator/prompts/confirmation.txt` | Prompt that classifies the reply to a pending item (confirm / cancel / correction / unrelated) |
+| `CHECKPOINT_DB_FILE` | `checkpoints.db` | SQLite checkpointer for the orchestrator graph; holds only conversations paused for a confirmation (deleted once a run finishes). Relative → from the project root |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled cron job |
 | `SESSION_DB_FILE` | `sessions.db` | SQLite file for persistent chat session history |
@@ -284,7 +286,7 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 | CLI interaction messages | `agentP/src/prompts/interaction.json` |
 | URLs for web scraping | `agentP/urls.txt` |
 | Runtime log | `logs/agent.log` |
-| Agent registry (orchestrator) | `agents.json` — `"owner_only": true` means only the bot owner (`TELEGRAM_OWNER_ID`) may use the agent; others are refused and its pending items are ignored |
+| Agent registry (orchestrator) | `agents.json` — `"owner_only": true` means only the bot owner (`TELEGRAM_OWNER_ID`) may use the agent; others are refused, and a non-owner message in a chat paused on its confirmation runs as a separate turn |
 | MCP server registry | `mcp.json` — `"{python}"` in a command = current interpreter, launched from the project root; `"owner_only": true` keeps the server out of the default tool set (`langchain_tools()` with no `server_name`), so only an agent that asks for it by name gets its tools; `"timeout": <seconds>` (default 60) caps each stdio call — a server that doesn't answer in time is killed and restarted on the next call |
 
 ---
@@ -297,4 +299,5 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 - **Pinecone required**: `STORE_TYPE=pinecone` needs a valid `PINECONE_API_KEY` and network access.
 - **Two Claude backends** (`ANTHROPIC_API` flag): `true` uses the Anthropic API with `ANTHROPIC_API_KEY` (billed per token); `false` uses `ChatClaudeCode` (`core/src/model/claude_code_chat.py`), which drives the local `claude` CLI via the Claude Agent SDK with its logged-in subscription. In Claude Code mode the agent's bound tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`; built-in Claude Code tools and user settings are disabled.
 - **Read `.text`, not `.content`**: Claude responses include thinking blocks, so `AIMessage.content` is a list. Use `response.text` to get the answer string.
+- **Confirmations are LangGraph interrupts**: an agent that leaves a pending item (`BaseAgent.pending_summary`) makes the orchestrator pause in the `confirmation` node via `interrupt()`; the next message on that session resumes it with `Command(resume=...)` (`MultiAgentGraph._start`). Routing, cleanup and classification use structured output (`llm.with_structured_output(Model, method="json_schema")`), which `ChatClaudeCode` also implements — test fakes for orchestrator LLMs must provide `with_structured_output`.
 - **Session persistence**: Chat history is stored in `SESSION_DB_FILE` (SQLite). The file is created automatically on first run at the project root.

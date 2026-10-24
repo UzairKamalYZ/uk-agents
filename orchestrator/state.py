@@ -81,6 +81,12 @@ class GraphState(TypedDict):
     direct : bool
         True when a pre-supervisor step has already decided the routing
         (bypassing the supervisor LLM).  False at graph entry.
+
+    awaiting : str | None
+        Name of an agent that left a pending item needing the user's yes/no
+        (set by its agent node).  After the synthesiser answers, the graph
+        goes to the confirmation node, which pauses with interrupt() until the
+        user's next message resumes it.  None when nothing is pending.
     """
 
     user_input: str
@@ -92,3 +98,4 @@ class GraphState(TypedDict):
     is_owner: bool
     raw_input: str
     direct: bool
+    awaiting: str | None
