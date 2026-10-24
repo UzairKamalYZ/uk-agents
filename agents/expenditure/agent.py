@@ -59,13 +59,15 @@ class ExpenditureAgent(BaseAgent):
 
     def confirm_pending(self, session_id: str) -> str:
         self._log_input("[confirmed pending expense]")
-        pending = self._ledger.get_pending()
-        if pending is not None and pending[0].amount is None:
-            return format_need_amount(pending[0])
-        e = self._ledger.confirm_pending()
-        if e is None:
-            return format_nothing("confirm")
-        return format_logged(e, *self._ledger.totals(self._today()))
+        with self._ledger.locked():
+            pending = self._ledger.get_pending()
+            if pending is not None and pending[0].amount is None:
+                return format_need_amount(pending[0])
+            e = self._ledger.confirm_pending()
+            if e is None:
+                return format_nothing("confirm")
+            totals = self._ledger.totals(self._today())
+        return format_logged(e, *totals)
 
     def discard_pending(self, session_id: str) -> None:
         self._log_input("[discarded pending expense]")

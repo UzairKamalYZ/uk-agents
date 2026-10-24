@@ -34,6 +34,9 @@ class TestLlmModelGraph(unittest.TestCase):
         self._rag_patcher.stop()
         self._mcp_patcher.stop()
 
+    def _hist(self, session_id: str) -> list:
+        return self.model._history.get(self.model.agent_name, session_id)
+
     def _make_state(self, **kwargs) -> State:
         defaults: State = {
             "user_prompt": "find a flat",
@@ -66,7 +69,7 @@ class TestLlmModelGraph(unittest.TestCase):
         SESSION = "sess-history-ask"
         self.model.graph.invoke.return_value = {"answer": "3 listings found."}
         self.model.ask("find me a flat", session_id=SESSION)
-        hist = self.model._histories[SESSION]
+        hist = self._hist(SESSION)
         self.assertEqual(len(hist), 2)
         self.assertIsInstance(hist[0], HumanMessage)
         self.assertIsInstance(hist[1], AIMessage)
@@ -78,7 +81,7 @@ class TestLlmModelGraph(unittest.TestCase):
         self.model.graph.invoke.side_effect = [{"answer": "answer 1"}, {"answer": "answer 2"}]
         self.model.ask("query 1", session_id=SESSION)
         self.model.ask("query 2", session_id=SESSION)
-        self.assertEqual(len(self.model._histories[SESSION]), 4)
+        self.assertEqual(len(self._hist(SESSION)), 4)
 
     def test_should_pass_correct_initial_state_when_ask_is_called(self):
         self.model.graph.invoke.return_value = {"answer": "ok"}
@@ -92,8 +95,8 @@ class TestLlmModelGraph(unittest.TestCase):
         self.model.graph.invoke.return_value = {"answer": "ok"}
         self.model.ask("q1", session_id="session-A")
         self.model.ask("q2", session_id="session-B")
-        self.assertEqual(self.model._histories["session-A"][0].content, "q1")
-        self.assertEqual(self.model._histories["session-B"][0].content, "q2")
+        self.assertEqual(self._hist("session-A")[0].content, "q1")
+        self.assertEqual(self._hist("session-B")[0].content, "q2")
 
     def test_should_share_history_within_same_session_across_turns(self):
         SESSION = "sess-share"
@@ -109,7 +112,7 @@ class TestLlmModelGraph(unittest.TestCase):
     def test_should_generate_session_id_when_none_provided_to_ask(self):
         self.model.graph.invoke.return_value = {"answer": "ok"}
         self.model.ask("any query")
-        self.assertEqual(len(self.model._histories), 1)
+        self.assertEqual(len(self.model._history.histories), 1)
 
     # ------------------------------------------------------------------
     # ask_stream()
@@ -126,7 +129,7 @@ class TestLlmModelGraph(unittest.TestCase):
         SESSION = "sess-stream-hist"
         self.model.graph.invoke.return_value = {"answer": "Found 2 listings."}
         list(self.model.ask_stream("my query", session_id=SESSION))
-        hist = self.model._histories[SESSION]
+        hist = self._hist(SESSION)
         self.assertEqual(len(hist), 2)
         self.assertIsInstance(hist[0], HumanMessage)
         self.assertIsInstance(hist[1], AIMessage)

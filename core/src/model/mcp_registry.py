@@ -20,8 +20,10 @@ Or get LangChain StructuredTools auto-generated from every server's schema:
 import json
 import keyword
 import logging
+import queue
 import subprocess
 import threading
+import time
 from typing import Any, Optional
 
 import httpx
@@ -31,19 +33,12 @@ from pydantic import BaseModel, Field, create_model
 
 logger = logging.getLogger(__name__)
 
-_INIT_PAYLOAD = (
-    json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "uk-agents", "version": "1.0"},
-        },
-    })
-    + "\n"
-)
+_PROTOCOL_VERSION = "2025-06-18"
+_CLIENT_INFO = {"name": "uk-agents", "version": "1.0"}
+
+# Seconds to wait for a tool reply, and for a server to start (npx may download first)
+DEFAULT_TIMEOUT = 60.0
+DEFAULT_START_TIMEOUT = 120.0
 
 _JSON_SCHEMA_TO_PYTHON: dict[str, type] = {
     "string": str,
@@ -115,19 +110,34 @@ class MCPProcess:
 
     The subprocess is started lazily on first use and kept alive for the
     lifetime of the application.  A threading lock serialises concurrent calls.
+    A background thread reads stdout into a queue, so every request waits at
+    most ``timeout`` seconds; a server that stops answering is killed and
+    restarted on the next call instead of blocking the caller forever.
 
     Parameters
     ----------
-    name    : Human-readable label used in log messages.
-    command : Subprocess command list, e.g. ``["npx", "--yes", "@acme/mcp"]``.
-    cwd     : Working directory for the subprocess (None → inherit the parent's).
+    name          : Human-readable label used in log messages.
+    command       : Subprocess command list, e.g. ``["npx", "--yes", "@acme/mcp"]``.
+    cwd           : Working directory for the subprocess (None → inherit the parent's).
+    timeout       : Seconds to wait for each reply.
+    start_timeout : Seconds to wait for the server to start and finish the handshake.
     """
 
-    def __init__(self, name: str, command: list[str], cwd: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        command: list[str],
+        cwd: str | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        start_timeout: float = DEFAULT_START_TIMEOUT,
+    ):
         self.name = name
         self._command = command
         self._cwd = cwd
+        self._timeout = timeout
+        self._start_timeout = start_timeout
         self._process: Optional[subprocess.Popen] = None
+        self._messages: queue.Queue = queue.Queue()
         self._lock = threading.Lock()
         self._req_id = 1
 
@@ -140,7 +150,7 @@ class MCPProcess:
             return
 
         logger.info("mcp[%s]: starting subprocess", self.name)
-        self._process = subprocess.Popen(
+        process = subprocess.Popen(
             self._command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -149,25 +159,83 @@ class MCPProcess:
             text=True,
             bufsize=1,
         )
-        self._process.stdin.write(_INIT_PAYLOAD)
-        self._process.stdin.flush()
-        self._process.stdout.readline()  # discard init response
+        self._process = process
+        self._messages = queue.Queue()
+        threading.Thread(
+            target=self._read_stdout, args=(process, self._messages),
+            name=f"mcp-{self.name}-reader", daemon=True,
+        ).start()
+        try:
+            self._req_id = 1
+            self._send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": _PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": _CLIENT_INFO,
+            }})
+            self._await_response(1, self._start_timeout)
+            self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        except TimeoutError:
+            self._kill()
+            raise ConnectionError(f"mcp[{self.name}]: did not start within {self._start_timeout:.0f}s") from None
+        except Exception:
+            self._kill()
+            raise
         logger.info("mcp[%s]: ready", self.name)
+
+    @staticmethod
+    def _read_stdout(process: subprocess.Popen, messages: queue.Queue) -> None:
+        """Reader thread: one JSON-RPC message per line → queue; None marks EOF."""
+        try:
+            for line in iter(process.stdout.readline, ""):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    messages.put(json.loads(line))
+                except ValueError:
+                    logger.debug("mcp: ignoring non-JSON stdout line %r", line[:200])
+        except Exception:  # pipe closed under us
+            pass
+        finally:
+            messages.put(None)
+
+    def _send(self, message: dict) -> None:
+        self._process.stdin.write(json.dumps(message) + "\n")
+        self._process.stdin.flush()
+
+    def _await_response(self, req_id: int, timeout: float) -> dict:
+        """Next reply with this id; notifications and stale replies are skipped."""
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                if remaining <= 0:
+                    raise queue.Empty
+                message = self._messages.get(timeout=remaining)
+            except queue.Empty:
+                raise TimeoutError(f"mcp[{self.name}]: no reply to request {req_id} within {timeout:.0f}s") from None
+            if message is None:
+                raise ConnectionError(f"mcp[{self.name}]: server exited")
+            if isinstance(message, dict) and message.get("id") == req_id and (
+                "result" in message or "error" in message
+            ):
+                return message
+
+    def _kill(self) -> None:
+        """Stop a dead or unresponsive server; the next call starts a fresh one."""
+        if self._process is not None and self._process.poll() is None:
+            self._process.kill()
+        self._process = None
 
     def _rpc(self, method: str, params: dict) -> dict:
         self._req_id += 1
-        payload = (
-            json.dumps({
-                "jsonrpc": "2.0",
-                "id": self._req_id,
-                "method": method,
-                "params": params,
-            })
-            + "\n"
-        )
-        self._process.stdin.write(payload)
-        self._process.stdin.flush()
-        return json.loads(self._process.stdout.readline())
+        req_id = self._req_id
+        self._send({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
+        try:
+            return self._await_response(req_id, self._timeout)
+        except (TimeoutError, ConnectionError):
+            self._kill()
+            raise
 
     # ------------------------------------------------------------------ #
     # Public interface                                                     #
@@ -192,6 +260,9 @@ class MCPProcess:
                 self._ensure_running()
                 logger.info("mcp[%s]: calling tool '%s' args=%s", self.name, name, arguments)
                 response = self._rpc("tools/call", {"name": name, "arguments": arguments})
+                if "error" in response:
+                    logger.error("mcp[%s]: tool '%s' error: %s", self.name, name, response["error"])
+                    return f"Tool '{name}' failed: {response['error'].get('message', 'unknown error')}"
                 content = response.get("result", {}).get("content", [])
                 result = "\n".join(
                     item.get("text", "")
@@ -200,6 +271,10 @@ class MCPProcess:
                 )
                 logger.info("mcp[%s]: tool '%s' returned %d chars", self.name, name, len(result))
                 return result
+            except TimeoutError:
+                logger.error("mcp[%s]: tool '%s' timed out after %.0fs — server restarted on next call",
+                             self.name, name, self._timeout)
+                return f"Tool '{name}' timed out — please try again."
             except Exception:
                 logger.exception("mcp[%s]: tool call failed name=%s args=%s", self.name, name, arguments)
                 return f"Tool '{name}' is currently unavailable."
@@ -354,9 +429,10 @@ class MCPRegistry:
         command: list[str],
         cwd: str | None = None,
         owner_only: bool = False,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> "MCPRegistry":
         """Register a stdio subprocess MCP server."""
-        self._servers[name] = MCPProcess(name, command, cwd=cwd)
+        self._servers[name] = MCPProcess(name, command, cwd=cwd, timeout=timeout)
         self._set_owner_only(name, owner_only)
         logger.info("mcp-registry: registered stdio server '%s'", name)
         return self

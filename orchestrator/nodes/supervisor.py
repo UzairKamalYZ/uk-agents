@@ -35,8 +35,9 @@ class SupervisorNode:
     Parameters
     ----------
     llm             : chat model used to produce the routing decision
-    prompt_template : text loaded from SUPERVISOR_PROMPT_FILE — must contain
-                      {user_input} and {agent_outputs} placeholders
+    prompt_template : text loaded from SUPERVISOR_PROMPT_FILE, with the {agents}
+                      list already filled in; the question and agent outputs
+                      are sent separately as the human message
     """
 
     def __init__(self, llm: BaseChatModel, prompt_template: str, agent_names: set[str] = None) -> None:
@@ -57,15 +58,15 @@ class SupervisorNode:
             or "None yet."
         )
 
-        prompt = (
-            self._prompt_template
-            .replace("{user_input}", state["user_input"])
-            .replace("{agent_outputs}", agent_outputs_text)
-        )
-
+        # User text and agent outputs stay out of the system prompt, so nothing in
+        # them can pose as routing rules (prompt injection).
         messages = [
-            SystemMessage(content=prompt),
-            HumanMessage(content="Which agent should run next, or should we FINISH?"),
+            SystemMessage(content=self._prompt_template),
+            HumanMessage(content=(
+                f"<user_question>\n{state['user_input']}\n</user_question>\n\n"
+                f"<agent_outputs>\n{agent_outputs_text}\n</agent_outputs>\n\n"
+                "Which agent should run next, or should we FINISH?"
+            )),
         ]
         raw = self._llm.invoke(messages)
         content = raw.text

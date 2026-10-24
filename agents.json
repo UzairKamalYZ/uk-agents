@@ -40,7 +40,8 @@
       "class": "agents.expenditure.agent.ExpenditureAgent",
       "description": "Logs the owner's personal spending (e.g. 'Colruyt 90 euros today'), undoes the last logged expense, and answers how much was spent this or last month. Route here for any message about money spent, purchases, expenses or spending totals. Does not handle stocks, investments or property.",
       "enabled": true,
-      "rag": false
+      "rag": false,
+      "owner_only": true
     }
   ]
 }

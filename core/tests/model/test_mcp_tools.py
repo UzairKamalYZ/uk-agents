@@ -1,4 +1,5 @@
 import json
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -259,9 +260,12 @@ def test_python_placeholder_runs_from_project_root():
 
 @patch("core.src.model.mcp_registry.subprocess.Popen")
 def test_process_launches_with_cwd(mock_popen):
-    mock_popen.return_value.stdout.readline.return_value = "{}"
+    init = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
+    mock_popen.return_value.poll.return_value = None
+    mock_popen.return_value.stdout.readline.side_effect = [init, ""]
     MCPProcess("x", ["cmd"], cwd="/some/dir")._ensure_running()
     assert mock_popen.call_args.kwargs["cwd"] == "/some/dir"
+    mock_popen.return_value.stdout.readline.side_effect = [init, ""]
     MCPProcess("y", ["cmd"])._ensure_running()
     assert mock_popen.call_args.kwargs["cwd"] is None
 
@@ -313,3 +317,80 @@ def test_optional_anyof_param_keeps_its_type():
     })
     assert model.model_fields["amount"].annotation == float | None
     assert model(amount=19.5).amount == 19.5
+
+
+# ---------------------------------------------------------------------------
+# Real stdio subprocesses (local Python scripts — no network): timeouts,
+# handshake, notifications interleaved with replies
+# ---------------------------------------------------------------------------
+
+_FAKE_SERVER = """
+import json, sys, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        reply = {"protocolVersion": msg["params"]["protocolVersion"]}
+    elif method == "notifications/initialized":
+        open(sys.argv[1], "w").write("initialized")
+        continue
+    elif msg["params"]["name"] == "hang":
+        time.sleep(60)
+        continue
+    elif msg["params"]["name"] == "broken":
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -1, "message": "bad args"}}), flush=True)
+        continue
+    else:
+        print(json.dumps({"jsonrpc": "2.0", "method": "notifications/message", "params": {}}), flush=True)
+        print("not json at all", flush=True)
+        reply = {"content": [{"type": "text", "text": "pong"}]}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": reply}), flush=True)
+"""
+
+
+def _fake_server(tmp_path, timeout=1.0):
+    script = tmp_path / "server.py"
+    script.write_text(_FAKE_SERVER)
+    marker = tmp_path / "marker"
+    return MCPProcess("fake", [sys.executable, str(script), str(marker)], timeout=timeout), marker
+
+
+def test_real_server_handshake_and_skips_notifications(tmp_path):
+    proc, marker = _fake_server(tmp_path)
+    try:
+        assert proc.call_tool("ping", {}) == "pong"
+        assert marker.read_text() == "initialized"
+    finally:
+        proc.close()
+
+
+def test_hung_server_times_out_then_restarts(tmp_path):
+    proc, _ = _fake_server(tmp_path, timeout=0.5)
+    try:
+        assert proc.call_tool("ping", {}) == "pong"
+        first = proc._process
+        assert "timed out" in proc.call_tool("hang", {})
+        assert first.poll() is not None or proc._process is None  # hung server was killed
+        assert proc.call_tool("ping", {}) == "pong"  # fresh server
+        assert proc._process is not first
+    finally:
+        proc.close()
+
+
+def test_json_rpc_error_is_reported_to_the_llm(tmp_path):
+    proc, _ = _fake_server(tmp_path)
+    try:
+        assert proc.call_tool("broken", {}) == "Tool 'broken' failed: bad args"
+    finally:
+        proc.close()
+
+
+def test_server_that_never_starts_does_not_hang(tmp_path):
+    script = tmp_path / "silent.py"
+    script.write_text("import time; time.sleep(60)")
+    proc = MCPProcess("silent", [sys.executable, str(script)], start_timeout=0.5)
+    try:
+        assert "unavailable" in proc.call_tool("x", {})
+        assert proc._process is None
+    finally:
+        proc.close()

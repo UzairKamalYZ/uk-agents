@@ -55,6 +55,7 @@ import logging
 import os
 from typing import Any
 
+from langchain_core.messages import AIMessageChunk
 from langgraph.graph import END, START, StateGraph
 
 from core.src.config.config import Config
@@ -296,15 +297,24 @@ class MultiAgentGraph:
         """
         initial_state = self._initial_state(user_input, session_id, is_owner)
 
-        # stream_mode="messages" yields (AIMessageChunk, metadata) tuples.
-        # metadata["langgraph_node"] tells us which graph node produced the chunk.
-        for chunk, metadata in self._graph.invoke(
+        # stream_mode="messages" yields (message, metadata) tuples as they happen:
+        # AIMessageChunk tokens while the synthesiser LLM writes, plus the complete
+        # AIMessage each node returns.  metadata["langgraph_node"] names the node.
+        streamed = False
+        for chunk, metadata in self._graph.stream(
             initial_state, stream_mode="messages"
         ):
-            if metadata.get("langgraph_node") == "synthesiser":
-                # .text skips thinking / tool-call blocks (empty for those chunks)
-                if chunk.text:
-                    yield chunk.text
+            if metadata.get("langgraph_node") != "synthesiser":
+                continue
+            # The final message repeats the streamed tokens — only use it when
+            # nothing was streamed (single-agent passthrough makes no LLM call).
+            if isinstance(chunk, AIMessageChunk):
+                streamed = True
+            elif streamed:
+                continue
+            # .text skips thinking / tool-call blocks (empty for those chunks)
+            if chunk.text:
+                yield chunk.text
 
     def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
         """

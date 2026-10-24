@@ -32,6 +32,9 @@ package-lock.json
 .idea/
 /package-lock.json
 node_modules/
+# Chat session history (SESSION_DB_FILE)
+sessions.db*
+
 # Expense ledger data
 expenses/
 /.claude/

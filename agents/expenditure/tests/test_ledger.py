@@ -156,4 +156,33 @@ def test_json_writes_are_atomic(tmp_path):
             ledger.add(date(2026, 10, 2), "B", 6)
     # The old history file is intact and no temp files are left behind
     assert len(json.loads((tmp_path / "history.json").read_text())) == 1
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["2026-10.txt", "history.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".lock", "2026-10.txt", "history.json"]
+
+
+def _add_many(root, place, n):
+    ledger = ExpenseLedger(root)
+    for _ in range(n):
+        ledger.add(date(2026, 10, 18), place, 1)
+
+
+def test_concurrent_adds_from_threads_and_processes_lose_nothing(tmp_path):
+    import multiprocessing
+    import threading
+
+    procs = [multiprocessing.get_context("spawn").Process(target=_add_many, args=(tmp_path, f"P{i}", 25))
+             for i in range(2)]
+    threads = [threading.Thread(target=_add_many, args=(tmp_path, f"T{i}", 25)) for i in range(2)]
+    for w in procs + threads:
+        w.start()
+    for w in procs + threads:
+        w.join()
+    assert len((tmp_path / "2026-10.txt").read_text().splitlines()) == 100
+    assert len(json.loads((tmp_path / "history.json").read_text())) == 100
+
+
+def test_lock_is_reentrant(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    with ledger.locked(), ledger.locked():
+        ledger.add(date(2026, 10, 18), "X", 1)
+    ledger.add(date(2026, 10, 18), "Y", 1)  # fully released afterwards
+    assert len((tmp_path / "2026-10.txt").read_text().splitlines()) == 2

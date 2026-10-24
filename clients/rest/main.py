@@ -2,12 +2,14 @@ from logging_config import setup_logging
 setup_logging()
 
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from orchestrator.agent_interface import OrchestratorAgent
 from core.src.config.config import Config
@@ -37,25 +39,43 @@ app = FastAPI(lifespan=lifespan)
 
 
 async def sse_formatter(stream):
-    """Formats a generator of strings into Server-Sent Events."""
+    """Formats a generator of strings into Server-Sent Events.
+
+    The agent's generator is blocking, so each chunk is pulled in a worker thread.
+    """
     try:
-        for chunk in stream:
+        async for chunk in iterate_in_threadpool(stream):
             yield f"data: {chunk}\n\n"
-            await asyncio.sleep(0.01)
     except asyncio.CancelledError:
         print("Client disconnected.")
 
 
 @app.get("/ask")
-async def ask(prompt: str, stream: bool = False, _: None = Depends(verify_api_key)):
-    """Endpoint to ask the agent a question."""
-    agent = app.state.agent
+async def ask(
+    prompt: str,
+    stream: bool = False,
+    session_id: str | None = None,
+    _: None = Depends(verify_api_key),
+):
+    """Endpoint to ask the agent a question.
+
+    Pass the same session_id on each call to keep a conversation; without one,
+    every request starts a fresh session instead of sharing a global history.
+    """
+    return await _ask(app.state.agent, prompt, stream, session_id)
+
+
+async def _ask(agent, prompt: str, stream: bool, session_id: str | None):
+    session_id = session_id or str(uuid.uuid4())
     if stream:
         return StreamingResponse(
-            sse_formatter(agent.ask(prompt, stream=True)),
+            sse_formatter(agent.ask(prompt, stream=True, session_id=session_id)),
             media_type="text/event-stream",
+            headers={"X-Session-Id": session_id},
         )
-    return {"response": agent.ask(prompt, stream=False)}
+    # The pipeline is blocking — run it in a worker thread so other requests keep being served
+    response = await run_in_threadpool(agent.ask, prompt, stream=False, session_id=session_id)
+    return {"response": response, "session_id": session_id}
 
 
 class RestClient(BaseClient):

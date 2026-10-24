@@ -161,7 +161,7 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `INTERACTION_FILE` | `agentP/src/prompts/interaction.json` | CLI interaction strings path |
 | `REFORMULATION_PROMPT` | `agentP/src/prompts/reformulated_prompt.txt` | Query rewrite template path |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from @BotFather |
-| `TELEGRAM_OWNER_ID` | _(empty)_ | Telegram user id of the owner; only needed for agents marked `"owner_only": true` in `agents.json` (none by default) |
+| `TELEGRAM_OWNER_ID` | _(empty)_ | Owner's Telegram user id or `@username` (comma-separate several; a channel id works for posts made as that channel). Send `/whoami` to the bot to see yours. Required for agents marked `"owner_only": true` in `agents.json` (the expense tracker) |
 | `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
 | `EXPENSES_DIR` | _(per-user data dir)_ | Expense ledger directory: monthly files, `inputs.log` (every message the expense agent received), history and pending item. Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
 | `NORMALISER_PROMPT_FILE` | `orchestrator/prompts/normaliser.txt` | Orchestrator normaliser prompt path |
@@ -225,7 +225,7 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 
 | Method | Path | Params | Response |
 |---|---|---|---|
-| GET | `/ask` | `prompt` (str), `stream` (bool, default `false`) | `{"response": str}` or SSE stream |
+| GET | `/ask` | `prompt` (str), `stream` (bool, default `false`), `session_id` (str, optional — reuse it to continue a conversation; omitted → fresh session per request) | `{"response": str, "session_id": str}` or SSE stream (session id in the `X-Session-Id` header) |
 
 **Streaming format** (SSE): Each chunk is sent as `data: {chunk}\n\n`.
 
@@ -285,7 +285,7 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 | URLs for web scraping | `agentP/urls.txt` |
 | Runtime log | `logs/agent.log` |
 | Agent registry (orchestrator) | `agents.json` — `"owner_only": true` means only the bot owner (`TELEGRAM_OWNER_ID`) may use the agent; others are refused and its pending items are ignored |
-| MCP server registry | `mcp.json` — `"{python}"` in a command = current interpreter, launched from the project root; `"owner_only": true` keeps the server out of the default tool set (`langchain_tools()` with no `server_name`), so only an agent that asks for it by name gets its tools |
+| MCP server registry | `mcp.json` — `"{python}"` in a command = current interpreter, launched from the project root; `"owner_only": true` keeps the server out of the default tool set (`langchain_tools()` with no `server_name`), so only an agent that asks for it by name gets its tools; `"timeout": <seconds>` (default 60) caps each stdio call — a server that doesn't answer in time is killed and restarted on the next call |
 
 ---
 

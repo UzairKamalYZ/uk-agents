@@ -50,8 +50,8 @@ class Config:
     # API security — leave empty to disable auth
     API_KEY = os.getenv("API_KEY", "")
 
-    # SQLite file for persistent session history
-    SESSION_DB_FILE = os.getenv("SESSION_DB_FILE", "sessions.db")
+    # SQLite file for persistent session history (relative → from the project root)
+    SESSION_DB_FILE = str(_PROJECT_ROOT / os.getenv("SESSION_DB_FILE", "sessions.db"))
     # Selenium scraping browser connection string
     SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")
     # Number of listings to retrieve per RAG search
