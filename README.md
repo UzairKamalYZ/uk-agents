@@ -118,7 +118,7 @@ uk-agents/
 │       │   ├── rag_context_manager.py# Vector search → formatted context string
 │       │   ├── context_builder.py    # Formats listing dicts as readable text
 │       │   ├── session_manager.py    # SQLite-backed session history
-│       │   ├── mcp_registry.py       # MCPProcess, MCPHttpProcess, MCPRegistry
+│       │   ├── mcp_registry.py       # MCPRegistry on the official mcp SDK client
 │       │   └── mcp_tools.py          # Loads mcp.json → shared _mcp registry
 │       └── persistence/
 │           ├── vector_store.py       # Abstract base (add_vectors / search)
@@ -573,18 +573,21 @@ Tools are declared in **`mcp.json`** at the project root. No Python changes are 
 }
 ```
 
-At startup, `mcp_tools.py` reads this file and registers each server in the `MCPRegistry`. Two transport types are supported:
+At startup, `mcp_tools.py` reads this file and registers each server in the `MCPRegistry`, which talks to them through the official `mcp` SDK client (`mcp.Client`). Two transport types are supported:
 
-| Type | Config key | Class |
+| Type | Config key | Notes |
 |---|---|---|
-| stdio subprocess | `"command": [...]` | `MCPProcess` |
-| HTTP JSON-RPC | `"url": "..."` | `MCPHttpProcess` |
+| stdio subprocess | `"command": [...]` | Minimal environment unless listed in `"env": [...]`; `{python}` servers get the full environment |
+| Streamable HTTP | `"url": "..."` | Optional `"api_key_env"` / `"api_key_param"` add a key as a query parameter |
+
+Both accept `"owner_only": true` and `"timeout": <seconds>` (default 60).
 
 **How it works**:
-1. `MCPRegistry` stores one `MCPProcess` (or `MCPHttpProcess`) per server name.
-2. `langchain_tools(server_name=None)` calls `tools/list` on each server and auto-generates LangChain `StructuredTool` objects from the returned JSON schemas.
+1. `MCPRegistry` keeps one persistent `MCPServerConnection` per server, owned by a task on a shared background event loop.
+2. `langchain_tools(server_name=None)` lists each server's tools and generates LangChain `StructuredTool`s from their JSON schemas — usable with `.invoke()` and `.ainvoke()`.
 3. The LLM is bound to these tools via `llm.bind_tools(tools)`.
 4. The `generate` node inspects `response.tool_calls` and routes execution to the right tool.
+5. A call that times out or fails disconnects that server (stopping a stdio subprocess); the next call reconnects.
 
 **Per-agent tool filtering**: agents can restrict which tools they receive:
 

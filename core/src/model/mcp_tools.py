@@ -17,8 +17,15 @@ by appending an entry — no code changes required:
 server is launched from the project root so ``-m package.module`` resolves.
 ``"owner_only": true`` keeps a server out of the default tool set
 (``langchain_tools()`` with no ``server_name``); request it by name instead.
-``"timeout": <seconds>`` overrides how long a stdio server may take to answer
-one call (default 60) before it is killed and restarted on the next call.
+Stdio servers start with a minimal environment (HOME, PATH, …) so secrets in
+``.env`` don't leak to third-party packages; list the variables a server needs
+in ``"env": ["SOME_API_KEY"]``.  ``{python}`` servers (our own code) get the
+full environment.
+``"timeout": <seconds>`` overrides how long a server may take to answer one
+call (default 60) before it is disconnected (a stdio subprocess is stopped)
+and reconnected on the next call.  ``"url"`` entries are Streamable HTTP
+servers; ``"api_key_env"`` / ``"api_key_param"`` add a key from the
+environment as a query parameter.
 
 The registry is built automatically at import time from that file.
 """
@@ -58,12 +65,18 @@ def _load_registry(config_path: Path) -> MCPRegistry:
         owner_only = bool(entry.get("owner_only", False))
 
         if name and command:
+            own_code = "{python}" in command
             # A {python} module only resolves when launched from the project root.
-            cwd = str(_PROJECT_ROOT) if "{python}" in command else None
+            cwd = str(_PROJECT_ROOT) if own_code else None
             command = [sys.executable if part == "{python}" else part for part in command]
+            # Our own servers get the full environment; third-party ones only what they list
+            if own_code:
+                env = dict(os.environ)
+            else:
+                env = {k: os.environ[k] for k in entry.get("env", []) if k in os.environ}
             logger.info("mcp-tools: adding stdio server '%s'", name)
             timeout = float(entry.get("timeout", DEFAULT_TIMEOUT))
-            registry.register(name, command, cwd=cwd, owner_only=owner_only, timeout=timeout)
+            registry.register(name, command, cwd=cwd, owner_only=owner_only, timeout=timeout, env=env)
 
         elif name and url:
             # Build query params: resolve any api_key_env reference from environment
@@ -80,7 +93,8 @@ def _load_registry(config_path: Path) -> MCPRegistry:
                         api_key_env, name,
                     )
             logger.info("mcp-tools: adding HTTP server '%s' → %s", name, url)
-            registry.register_http(name, url, params=params, owner_only=owner_only)
+            timeout = float(entry.get("timeout", DEFAULT_TIMEOUT))
+            registry.register_http(name, url, params=params, owner_only=owner_only, timeout=timeout)
 
         else:
             logger.warning("mcp-tools: skipping invalid entry %s", entry)

@@ -10,7 +10,7 @@ import pytest
 
 from agents.expenditure import mcp_server
 from agents.expenditure.ledger import Expense, ExpenseLedger
-from core.src.model.mcp_registry import MCPProcess
+from core.src.model.mcp_registry import MCPRegistry
 
 TODAY = date(2026, 10, 18)
 
@@ -129,17 +129,24 @@ def test_propose_without_amount_stores_unknown(ledger, tmp_path, amount):
     assert not (tmp_path / "2026-10.txt").exists()
 
 
-def test_server_lists_five_tools():
+def test_server_lists_five_tools_and_writes_to_expenses_dir():
+    # Same launch as mcp.json: {python} server, project-root cwd, full environment
     with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"EXPENSES_DIR": d}):
-        proc = MCPProcess("expenses", [sys.executable, "-m", "agents.expenditure.mcp_server"])
+        registry = MCPRegistry().register(
+            "expenses", [sys.executable, "-m", "agents.expenditure.mcp_server"],
+            cwd=str(Path(__file__).resolve().parents[3]), env=dict(os.environ),
+        )
         try:
-            tools = proc.list_tools()
+            tools = {t.name: t for t in registry.langchain_tools("expenses")}
+            reply = tools["add_expense"].invoke({"place": "Colruyt", "amount": 9, "date": "2026-10-18"})
+            assert reply.startswith("✅ Expense saved")
+            assert (Path(d) / "2026-10.txt").exists()  # EXPENSES_DIR reached the subprocess
         finally:
-            proc.close()
-    assert {t["name"] for t in tools} == {
+            registry.close()
+    assert set(tools) == {
         "add_expense", "propose_expense", "undo_last_expense", "get_expense_totals", "get_expense_breakdown",
     }
-    assert all("ledger" not in str(t.get("inputSchema")) for t in tools)
-    required = {t["name"]: set(t["inputSchema"].get("required", [])) for t in tools}
-    assert required["add_expense"] == {"place", "amount"}
-    assert required["propose_expense"] == {"place", "problem"}
+    schemas = {name: t.args_schema.model_json_schema() for name, t in tools.items()}
+    assert all("ledger" not in str(schema) for schema in schemas.values())
+    assert set(schemas["add_expense"]["required"]) == {"place", "amount"}
+    assert set(schemas["propose_expense"]["required"]) == {"place", "problem"}
