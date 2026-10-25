@@ -21,7 +21,6 @@ class AgentEntry:
     instance: object   # live BaseAgent-compatible object (must have .ask())
     llm_provider: str  # provider used by this agent (e.g. "anthropic")
     llm_model: str     # model name used by this agent (e.g. "claude-opus-5-5")
-    owner_only: bool = False  # True → only the bot owner may use this agent
     display_name: str = ""    # shown to users, e.g. "Expenditure Tracker" (defaults to a title-cased name)
     remarks: tuple[str, ...] = field(default_factory=tuple)  # one-liners shown while the agent works
 
@@ -79,7 +78,6 @@ def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
             instance=instance,
             llm_provider=llm_provider,
             llm_model=llm_model,
-            owner_only=spec.get("owner_only", False),
             display_name=spec.get("display_name", ""),
             remarks=tuple(spec.get("remarks", ())),
         ))

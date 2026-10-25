@@ -23,6 +23,7 @@ import logging
 import requests
 
 from core.src.config.config import Config
+from core.src.output_guard import WITHHELD_REPLY, scrub
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,11 @@ class GreenAPIClient:
           - Individual: "79001234567@c.us"
           - Group:      "120363xxxxxxxxx@g.us"
         """
+        result = scrub(message)
+        if result.found:
+            logger.warning("WhatsApp message to %s contained tool-call markup %s — removed", chat_id, list(result.found))
         url = f"{self._base}/sendMessage/{self._token}"
-        payload = {"chatId": chat_id, "message": message}
+        payload = {"chatId": chat_id, "message": result.text or WITHHELD_REPLY}
         resp = requests.post(url, json=payload, timeout=_TIMEOUT_SHORT)
         resp.raise_for_status()
         return resp.json()

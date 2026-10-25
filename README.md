@@ -64,7 +64,7 @@ MultiAgentGraph             ← LangGraph multi-agent graph (async, checkpointed
   │             finance_agent         ← live stock data via Yahoo Finance MCP
   │             whatsapp_agent        ← RAG property search, mobile-friendly replies
   │             mail_agent            ← email questions from conversation history
-  │             expenditure_tracker   ← owner's expenses (owner_only)
+  │             expenditure_tracker   ← personal expense ledger
   │
   ├─► synthesiser           ← one agent: its answer as is; several: LLM merge
   │       │
@@ -197,7 +197,7 @@ class GraphState(TypedDict):
     plan: list[str]                          # agents to run, in order (router)
     next: str                                # where a resumed confirmation goes
     turns: int                               # agent calls this turn
-    is_owner: bool
+    history: str                             # recent turns, for the router
     awaiting: str | None                     # agent waiting for a yes/no
 ```
 
@@ -557,7 +557,7 @@ At startup, `mcp_tools.py` reads this file and registers each server in the `MCP
 | stdio subprocess | `"command": [...]` | Minimal environment unless listed in `"env": [...]`; `{python}` servers get the full environment |
 | Streamable HTTP | `"url": "..."` | Optional `"api_key_env"` / `"api_key_param"` add a key as a query parameter |
 
-Both accept `"owner_only": true` and `"timeout": <seconds>` (default 60).
+Both accept `"timeout": <seconds>` (default 60).
 
 **How it works**:
 1. `MCPRegistry` keeps one persistent `MCPServerConnection` per server, owned by a task on a shared background event loop.

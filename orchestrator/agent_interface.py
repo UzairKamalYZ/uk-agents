@@ -27,11 +27,13 @@ out so only the final synthesis reaches the caller.
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator, Generator
+from typing import AsyncIterator, Callable, Generator
 
 from langsmith import traceable
 
+from .agent_registry import AgentEntry
 from .graph import MultiAgentGraph
+from .tracing import tag_current_trace
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,7 @@ class OrchestratorAgent:
         stream: bool = False,
         session_id: str = "default",
         *,
-        is_owner: bool = False,
+        on_route: Callable[[AgentEntry], None] | None = None,
     ) -> str | Generator[str, None, None]:
         """
         Ask the multi-agent pipeline a question.
@@ -83,8 +85,9 @@ class OrchestratorAgent:
                      if False (default), blocks until the full answer is ready
         session_id : passed through to each agent so per-session history is
                      maintained correctly across turns
-        is_owner   : True when the caller is the bot's owner; agents marked
-                     "owner_only" in agents.json refuse non-owner requests
+        on_route   : blocking path only — called with each agent's AgentEntry
+                     just before it runs (e.g. to show "Expenditure Tracker is
+                     working on it…")
 
         Returns
         -------
@@ -93,10 +96,10 @@ class OrchestratorAgent:
         """
         if stream:
             # Return a generator — the caller iterates it to receive chunks
-            return self._stream_tokens(prompt, session_id, is_owner)
+            return self._stream_tokens(prompt, session_id)
 
         # Blocking path — run the full graph and return the final string
-        return self._graph.ask(prompt, session_id=session_id, is_owner=is_owner)
+        return self._graph.ask(prompt, session_id=session_id, on_route=self._tagging(on_route))
 
     @traceable(
         name="orchestrator.request",
@@ -108,23 +111,39 @@ class OrchestratorAgent:
         prompt: str,
         session_id: str = "default",
         *,
-        is_owner: bool = False,
+        on_route: Callable[[AgentEntry], None] | None = None,
     ) -> str:
-        """Async ask() for clients running an event loop (REST, Telegram)."""
-        return await self._graph.aask(prompt, session_id=session_id, is_owner=is_owner)
+        """Async ask() for clients running an event loop (REST, Telegram).
+
+        on_route runs on the orchestrator's loop thread — see MultiAgentGraph.aask.
+        """
+        return await self._graph.aask(
+            prompt, session_id=session_id, on_route=self._tagging(on_route)
+        )
+
+    @staticmethod
+    def _tagging(on_route: Callable[[AgentEntry], None] | None) -> Callable[[AgentEntry], None]:
+        """Tag each picked agent onto this request's LangSmith trace, then call on_route."""
+        routed: list[str] = []
+
+        def _on_route(entry: AgentEntry) -> None:
+            routed.append(entry.name)
+            tag_current_trace([f"agent:{entry.name}"], {"agents": list(routed)})
+            if on_route is not None:
+                on_route(entry)
+
+        return _on_route
 
     def astream(
         self,
         prompt: str,
         session_id: str = "default",
-        *,
-        is_owner: bool = False,
     ) -> AsyncIterator[str]:
         """Async generator of answer tokens as the synthesiser writes them."""
-        return self._graph.astream_tokens(prompt, session_id=session_id, is_owner=is_owner)
+        return self._graph.astream_tokens(prompt, session_id=session_id)
 
     def _stream_tokens(
-        self, prompt: str, session_id: str, is_owner: bool = False
+        self, prompt: str, session_id: str
     ) -> Generator[str, None, None]:
         """
         Yield real tokens from the synthesiser LLM as they are generated.
@@ -138,7 +157,7 @@ class OrchestratorAgent:
         The caller (REST SSE endpoint, Telegram live-edit) receives chunks
         immediately as the LLM writes them, not after the whole pipeline finishes.
         """
-        yield from self._graph.stream_tokens(prompt, session_id=session_id, is_owner=is_owner)
+        yield from self._graph.stream_tokens(prompt, session_id=session_id)
 
     def close(self) -> None:
         """Close the checkpointer and stop the orchestrator's event loop."""

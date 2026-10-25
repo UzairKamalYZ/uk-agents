@@ -27,6 +27,8 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from core.src.output_guard import WITHHELD_REPLY, scrub
+
 from ..state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -83,7 +85,11 @@ class SynthesiserNode:
             HumanMessage(content=user_input),
         ]
         response = await self._llm.ainvoke(messages)
-        answer = response.text
+        result = scrub(response.text)
+        if result.found:
+            logger.warning("[synthesiser] merged answer contained tool-call markup %s — removed",
+                           list(result.found))
+        answer = result.text or WITHHELD_REPLY
 
         logger.info("[synthesiser] final answer len=%d", len(answer))
         updated = dict(agent_outputs)

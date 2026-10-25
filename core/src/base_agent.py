@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from abc import ABC, abstractmethod
@@ -85,8 +86,14 @@ class BaseAgent(ABC):
         return self.model.ask(prompt, session_id=sid)
 
     async def aask(self, prompt: str, session_id: str = None) -> str:
-        """Async ask() — what the orchestrator calls. Blocking answer, no streaming."""
+        """Async ask() — what the orchestrator calls. Blocking answer, no streaming.
+
+        An agent that answers in its own ask() but has no aask() of its own gets that
+        ask() run in a worker thread — never the plain LLM pipeline it bypasses.
+        """
         logger.info("[%s] BaseAgent.aask() entered", self.__class__.__name__)
+        if type(self).ask is not BaseAgent.ask and type(self).aask is BaseAgent.aask:
+            return await asyncio.to_thread(self.ask, prompt, session_id=session_id or self.session_id)
         return await self.model.aask(prompt, session_id=session_id or self.session_id)
 
     # Pending-confirmation hooks — no-ops unless an agent keeps pending state.

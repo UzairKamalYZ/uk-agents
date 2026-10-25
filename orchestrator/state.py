@@ -71,10 +71,6 @@ class GraphState(TypedDict):
         Incremented by every agent node; at MAX_AGENT_TURNS the plan is cut
         short and the synthesiser answers.
 
-    is_owner : bool
-        True when the caller is the bot's owner.  Agents flagged
-        "owner_only" in agents.json refuse to run when this is False.
-
     raw_input : str
         The user's message exactly as received, before any normalisation.
 
@@ -83,6 +79,11 @@ class GraphState(TypedDict):
         (set by its agent node).  After the synthesiser answers, the graph
         goes to the confirmation node, which pauses with interrupt() until the
         user's next message resumes it.  None when nothing is pending.
+
+    history : str
+        The session's last few user/assistant turns ("user: …" / "<agent>: …"
+        lines, oldest first; "" for a new conversation).  Shown to the router
+        so follow-ups ("yes", "and for last month?") keep their context.
     """
 
     user_input: str
@@ -92,6 +93,6 @@ class GraphState(TypedDict):
     plan: list[str]
     next: str
     turns: int
-    is_owner: bool
     raw_input: str
     awaiting: str | None
+    history: str

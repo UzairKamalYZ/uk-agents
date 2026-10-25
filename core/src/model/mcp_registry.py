@@ -303,8 +303,6 @@ class MCPRegistry:
 
     def __init__(self) -> None:
         self._servers: dict[str, MCPServerConnection] = {}
-        # Servers excluded from the default (server_name=None) tool set, e.g. ledger writers.
-        self._owner_only: set[str] = set()
         self._loop = BackgroundLoop("mcp-loop")
 
     # ------------------------------------------------------------------ #
@@ -316,7 +314,6 @@ class MCPRegistry:
         name: str,
         command: list[str],
         cwd: str | None = None,
-        owner_only: bool = False,
         timeout: float = DEFAULT_TIMEOUT,
         start_timeout: float = DEFAULT_START_TIMEOUT,
         env: dict[str, str] | None = None,
@@ -327,7 +324,7 @@ class MCPRegistry:
         so secrets in os.environ don't leak to third-party servers.
         """
         self._add(MCPServerConnection(name, _stdio_target(command, cwd, env), timeout, start_timeout,
-                                      command=command, cwd=cwd), owner_only)
+                                      command=command, cwd=cwd))
         logger.info("mcp-registry: registered stdio server '%s'", name)
         return self
 
@@ -337,11 +334,10 @@ class MCPRegistry:
         url: str,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
-        owner_only: bool = False,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> "MCPRegistry":
         """Register a Streamable HTTP MCP server (query params are appended to the URL)."""
-        self._add(MCPServerConnection(name, _http_target(url, params, headers), timeout), owner_only)
+        self._add(MCPServerConnection(name, _http_target(url, params, headers), timeout))
         logger.info("mcp-registry: registered HTTP server '%s' → %s", name, url)
         return self
 
@@ -349,23 +345,15 @@ class MCPRegistry:
         self,
         name: str,
         target: Any,
-        owner_only: bool = False,
         timeout: float = DEFAULT_TIMEOUT,
         start_timeout: float = DEFAULT_START_TIMEOUT,
     ) -> "MCPRegistry":
         """Register anything ``mcp.Client`` accepts, e.g. an in-process ``MCPServer``."""
-        self._add(MCPServerConnection(name, lambda: target, timeout, start_timeout), owner_only)
+        self._add(MCPServerConnection(name, lambda: target, timeout, start_timeout))
         return self
 
-    def _add(self, server: MCPServerConnection, owner_only: bool) -> None:
+    def _add(self, server: MCPServerConnection) -> None:
         self._servers[server.name] = server
-        if owner_only:
-            self._owner_only.add(server.name)
-        else:
-            self._owner_only.discard(server.name)
-
-    def is_owner_only(self, name: str) -> bool:
-        return name in self._owner_only
 
     # ------------------------------------------------------------------ #
     # Tool dispatch                                                        #
@@ -394,12 +382,11 @@ class MCPRegistry:
         Parameters
         ----------
         server_name : if given, only return tools from that server;
-                      if None (default), return tools from all servers except
-                      owner-only ones (those must be requested by name).
+                      if None (default), return tools from all servers.
                       An unregistered name yields no tools (never all servers).
         """
         if server_name is None:
-            servers = [s for n, s in self._servers.items() if n not in self._owner_only]
+            servers = list(self._servers.values())
         elif server_name in self._servers:
             servers = [self._servers[server_name]]
         else:

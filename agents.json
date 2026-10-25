@@ -5,35 +5,69 @@
       "class": "agents.conversational.agent.ConversationalAgent",
       "description": "Handles greetings, small talk, and general questions. Route here for hi, hello, how are you, or any message that is not about property search or finance. Never calls property or finance tools.",
       "enabled": true,
-      "rag": false
+      "rag": false,
+      "display_name": "Conversational Agent",
+      "summary": "Chat, greetings and general questions — and telling you what the other agents can do.",
+      "remarks": [
+        "Warming up the small-talk engine…",
+        "Polishing its best 'how do you do'…",
+        "Practising its friendliest smile (it has no face, but still)…"
+      ]
     },
     {
       "name": "property_agent",
       "class": "agents.property.agent.PropertySearchAgent",
       "description": "Searches property listings matching the user's criteria using available listing data. Must be called before finance_agent when listing prices are needed.",
       "enabled": true,
-      "rag": true
+      "rag": true,
+      "display_name": "Property Search Agent",
+      "summary": "Searches property listings that match your criteria.",
+      "remarks": [
+        "Why do real estate agents make great comedians? Because they always know how to close!",
+        "What do you call a haunted property? A buy-one-get-one-scare deal.",
+        "Why did the house go to therapy? It had too many issues with its foundation.",
+        "What's a real estate agent's favourite type of music? House!"
+      ]
     },
     {
       "name": "finance_agent",
       "class": "agents.finance.agent.FinanceAgent",
       "description": "Stock analysis and investment advice only. Uses live Yahoo Finance data. Route here for questions about stocks, tickers, share prices, or investment decisions. Does NOT handle currency conversion or mortgages.",
       "enabled": true,
-      "rag": false
+      "rag": false,
+      "display_name": "Finance Agent",
+      "summary": "Stock prices, stock analysis and investment questions (Yahoo Finance).",
+      "remarks": [
+        "Squinting at candlestick charts like they're tea leaves…",
+        "Buying low, selling high, and mostly drinking coffee…",
+        "Asking the market nicely to behave…"
+      ]
     },
     {
       "name": "whatsapp_agent",
       "class": "agents.whatsapp.agent.WhatsAppAgent",
       "description": "Handles property search questions arriving via WhatsApp. Produces short, mobile-friendly replies without markdown tables or heavy formatting. Route here when the channel is WhatsApp or when a brief, conversational property answer is needed.",
       "enabled": true,
-      "rag": true
+      "rag": true,
+      "display_name": "WhatsApp Agent",
+      "summary": "Short, mobile-friendly property answers (also behind the WhatsApp group listener).",
+      "remarks": [
+        "Typing… stops typing… typing again…",
+        "Keeping it short — this is WhatsApp, not a novel."
+      ]
     },
     {
       "name": "mail_agent",
       "class": "agents.mails.agent.MailAgent",
       "description": "Handles questions about emails and inboxes. Route here for requests like 'do I have emails from X', 'summarise my emails', or 'help me draft a reply'. Does not handle property listings or financial topics.",
       "enabled": true,
-      "rag": false
+      "rag": false,
+      "display_name": "Mail Agent",
+      "summary": "Questions about your emails, summaries and drafting replies.",
+      "remarks": [
+        "Digging through the inbox so you don't have to…",
+        "Politely ignoring 47 newsletters on your behalf…"
+      ]
     },
     {
       "name": "expenditure_tracker",
@@ -41,7 +75,29 @@
       "description": "Logs the owner's personal spending (e.g. 'Colruyt 90 euros today'), undoes the last logged expense, and answers how much was spent this or last month. Route here for any message about money spent, purchases, expenses or spending totals. Does not handle stocks, investments or property.",
       "enabled": true,
       "rag": false,
-      "owner_only": true
+      "display_name": "Expenditure Tracker",
+      "summary": "Logs your spending (\"Aldi 10\" or a voice note), undoes the last entry, monthly totals, top expenses and per-shop breakdown.",
+      "remarks": [
+        "Counting your coins — every cent, no judgement. Well, a little judgement.",
+        "Opening the wallet ledger with trembling hands…",
+        "Checking whether that was a need or a want… just kidding, logging it.",
+        "Sharpening the pencil and the calculator…"
+      ]
+    },
+    {
+      "name": "fbr_tax_filing",
+      "class": "agents.fbr_tax.agent.FbrTaxAgent",
+      "description": "Prepares the owner's Pakistan (FBR) income tax return and wealth statement on the FBR IRIS portal by controlling Chrome, up to a saved draft, and answers questions about past FBR returns. Route here for any message about FBR, IRIS, Pakistan income tax, tax returns, wealth statements, filing status, or replies during an ongoing filing (logged in, bank balances in rupees, approving the draft). Does not handle personal spending, stocks or property.",
+      "enabled": true,
+      "rag": false,
+      "display_name": "FBR-PK Tax Filing",
+      "summary": "Prepares your Pakistan FBR income tax return and wealth statement on IRIS in Chrome, up to a saved draft, and answers questions about past returns.",
+      "remarks": [
+        "Brewing chai and opening IRIS — this may take a while…",
+        "Counting rupees twice, filing once…",
+        "Finding the one field IRIS hid this year…",
+        "Politely waiting for an FBR page to load (bring snacks)…"
+      ]
     }
   ]
 }

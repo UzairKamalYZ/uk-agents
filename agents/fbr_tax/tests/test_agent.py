@@ -86,6 +86,14 @@ def test_stream_yields_the_whole_reply(agent):
     assert list(agent.ask("hi", stream=True, session_id="chat")) == ["Please log in to IRIS."]
 
 
+def test_aask_runs_the_claude_code_session_not_the_plain_llm(agent):
+    # The orchestrator calls aask(); it must drive the browser session like ask() does
+    import asyncio
+    assert asyncio.run(agent.aask("is my return filed?", session_id="chat")) == "Please log in to IRIS."
+    agent._runner.run.assert_called_once_with("is my return filed?", None)
+    agent.model.aask.assert_not_called()
+
+
 def test_session_store_round_trip(tmp_path):
     store = FilingSessions(tmp_path / "s.db")
     assert store.get("chat", NOW) is None
@@ -103,6 +111,8 @@ def test_options_lock_down_tools_and_enable_skill_and_chrome(project):
     assert opts.skills == [SKILL, "claude-in-chrome"]
     assert opts.extra_args == {"chrome": None}
     assert "Bash" not in opts.tools and "WebFetch" not in opts.tools
+    # skills= only grants Skill(name); without the Skill tool itself the model writes the call as text
+    assert "Skill" in opts.tools
     assert opts.permission_mode == "dontAsk"
     assert "Write(/snapshots/**)" in opts.allowed_tools
     assert not any(t in ("Write", "Edit") for t in opts.allowed_tools)   # writes are path-scoped only

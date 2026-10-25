@@ -1,17 +1,29 @@
-import json
+import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
-from unittest.mock import patch
 
-import pytest
-
-from agents.expenditure.ledger import Expense, ExpenseLedger
+from agents.expenditure.ledger import DB_FILENAME, Expense, ExpenseLedger
 from agents.expenditure.replies import format_breakdown, format_logged, format_question, format_totals
 
 
-def test_add_writes_month_file_line(tmp_path):
+def _e(d, place, amount):
+    return Expense(d, place, Decimal(amount))
+
+
+def test_add_stores_row_in_database(tmp_path):
     ExpenseLedger(tmp_path).add(date(2026, 10, 18), "Colruyt", 90)
-    assert (tmp_path / "2026-10.txt").read_text() == "2026-10-18 | Colruyt | 90.00\n"
+    assert (tmp_path / DB_FILENAME).exists()
+    assert ExpenseLedger(tmp_path).expenses() == [_e(date(2026, 10, 18), "Colruyt", "90.00")]
+
+
+def test_records_survive_a_restart(tmp_path):
+    ExpenseLedger(tmp_path).add(date(2026, 10, 18), "Colruyt", 90)
+    ExpenseLedger(tmp_path).set_pending(_e(date(2026, 10, 18), "Aldi", "5"), "check")
+    ExpenseLedger(tmp_path).log_input("Colruyt 90")
+    fresh = ExpenseLedger(tmp_path)  # a new process would build a new ledger on the same folder
+    assert fresh.expenses() == [_e(date(2026, 10, 18), "Colruyt", "90.00")]
+    assert fresh.get_pending()[1] == "check"
+    assert [t for _, t in fresh.inputs()] == ["Colruyt 90"]
 
 
 def test_totals_prev_and_current(tmp_path):
@@ -28,50 +40,75 @@ def test_totals_across_year_boundary(tmp_path):
     assert ledger.totals(date(2027, 1, 1))[0] == Decimal("50.00")
 
 
-def test_backdated_expense_and_undo_hit_previous_month_file(tmp_path):
+def test_monthly_totals_view(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    ledger.add(date(2026, 9, 5), "Rent", 1000)
+    ledger.add(date(2026, 10, 2), "Shop", 30)
+    ledger.add(date(2026, 10, 3), "Shop", 12.5)
+    with sqlite3.connect(tmp_path / DB_FILENAME) as conn:
+        rows = conn.execute("SELECT month, entries, total_eur FROM monthly_totals ORDER BY month").fetchall()
+    assert rows == [("2026-09", 1, 1000.0), ("2026-10", 2, 42.5)]
+
+
+def test_backdated_expense_and_undo(tmp_path):
     ledger = ExpenseLedger(tmp_path)
     ledger.add(date(2026, 10, 1), "A", 10)
     ledger.add(date(2026, 9, 30), "B", 20)
     undone = ledger.undo_last()
-    assert undone.amount == Decimal("20.00") and undone.place == "B"
-    assert "20.00" not in (tmp_path / "2026-09.txt").read_text()
-    assert (tmp_path / "2026-10.txt").read_text() == "2026-10-01 | A | 10.00\n"
+    assert undone == _e(date(2026, 9, 30), "B", "20.00")
+    assert ledger.expenses() == [_e(date(2026, 10, 1), "A", "10.00")]
+    assert ledger.totals(date(2026, 10, 18)) == (Decimal("0"), Decimal("10.00"))
+
+
+def test_undo_keeps_the_row_for_the_record(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    ledger.add(date(2026, 10, 1), "A", 5)
+    ledger.undo_last()
+    with sqlite3.connect(tmp_path / DB_FILENAME) as conn:
+        assert conn.execute("SELECT place, deleted_at IS NOT NULL FROM expenses").fetchall() == [("A", 1)]
 
 
 def test_undo_on_empty_returns_none(tmp_path):
     assert ExpenseLedger(tmp_path).undo_last() is None
 
 
-def test_undo_removes_only_last_duplicate(tmp_path):
+def test_repeated_undo_walks_back(tmp_path):
     ledger = ExpenseLedger(tmp_path)
     ledger.add(date(2026, 10, 1), "A", 5)
     ledger.add(date(2026, 10, 1), "A", 5)
-    ledger.undo_last()
-    assert (tmp_path / "2026-10.txt").read_text().count("A | 5.00") == 1
+    ledger.add(date(2026, 10, 2), "B", 7)
+    assert ledger.undo_last().place == "B"
+    assert ledger.undo_last().place == "A"
+    assert ledger.expenses() == [_e(date(2026, 10, 1), "A", "5.00")]
 
 
 def test_amount_rounding_and_comma(tmp_path):
     ledger = ExpenseLedger(tmp_path)
     assert ledger.add(date(2026, 10, 1), "A", 12.499999).amount == Decimal("12.50")
     assert ledger.add(date(2026, 10, 1), "A", "12,5").amount == Decimal("12.50")
+    assert ledger.totals(date(2026, 10, 1))[1] == Decimal("25.00")
 
 
-def test_pipe_in_place_is_sanitised(tmp_path):
-    ExpenseLedger(tmp_path).add(date(2026, 10, 1), "A|B", 1)
-    line = (tmp_path / "2026-10.txt").read_text().strip()
-    assert "A/B" in line
-    assert len(line.split(" | ")) == 3
+def test_place_whitespace_is_collapsed(tmp_path):
+    assert ExpenseLedger(tmp_path).add(date(2026, 10, 1), "  Albert\n Heijn ", 1).place == "Albert Heijn"
 
 
 def test_pending_roundtrip_and_confirm(tmp_path):
     ledger = ExpenseLedger(tmp_path)
     assert ledger.confirm_pending() is None
-    e = Expense(date(2026, 10, 18), "Colruyt", Decimal("19.00"))
+    e = _e(date(2026, 10, 18), "Colruyt", "19.00")
     ledger.set_pending(e, "amount unclear")
     assert ledger.get_pending() == (e, "amount unclear")
     assert ledger.confirm_pending() == e
     assert ledger.get_pending() is None
-    assert "2026-10-18 | Colruyt | 19.00" in (tmp_path / "2026-10.txt").read_text()
+    assert ledger.expenses() == [e]
+
+
+def test_set_pending_replaces_previous(tmp_path):
+    ledger = ExpenseLedger(tmp_path)
+    ledger.set_pending(_e(date(2026, 10, 18), "A", "1"), "x")
+    ledger.set_pending(_e(date(2026, 10, 18), "B", "2"), "y")
+    assert ledger.get_pending() == (_e(date(2026, 10, 18), "B", "2.00"), "y")
 
 
 def test_replies_format():
@@ -117,13 +154,14 @@ def test_breakdown_groups_places_case_insensitively_largest_first(tmp_path):
     assert ledger.breakdown(2026, 11) == []
 
 
-def test_log_input_appends_one_line_per_message(tmp_path):
+def test_log_input_records_one_row_per_message(tmp_path):
     ledger = ExpenseLedger(tmp_path / "new")
     ledger.log_input("Colruyt 90\neuros", datetime(2026, 10, 18, 9, 5, 1))
     ledger.log_input("undo last", datetime(2026, 10, 18, 9, 6, 0))
-    assert (tmp_path / "new" / "inputs.log").read_text() == (
-        "2026-10-18 09:05:01 | Colruyt 90 euros\n2026-10-18 09:06:00 | undo last\n"
-    )
+    assert ledger.inputs() == [
+        ("2026-10-18 09:05:01", "Colruyt 90 euros"),
+        ("2026-10-18 09:06:00", "undo last"),
+    ]
 
 
 def test_pending_roundtrip_with_unknown_amount(tmp_path):
@@ -133,56 +171,17 @@ def test_pending_roundtrip_with_unknown_amount(tmp_path):
     assert ledger.get_pending() == (e, "amount missing")
 
 
-@pytest.mark.parametrize("content", ["", "{not json", '{"expense": {}}', "[]"])
-def test_corrupt_pending_treated_as_none(tmp_path, content):
-    (tmp_path / "pending.json").write_text(content)
+def test_corrupt_database_reads_no_pending(tmp_path):
+    (tmp_path / DB_FILENAME).write_text("this is not a database")
     assert ExpenseLedger(tmp_path).get_pending() is None
 
 
-@pytest.mark.parametrize("content", ["", "[{trunc", '{"a": 1}'])
-def test_corrupt_history_treated_as_empty(tmp_path, content):
-    (tmp_path / "history.json").write_text(content)
+def test_top_expenses_excludes_undone_and_other_months(tmp_path):
     ledger = ExpenseLedger(tmp_path)
-    assert ledger.undo_last() is None
+    ledger.add(date(2026, 9, 30), "Old", 999)
     ledger.add(date(2026, 10, 1), "A", 5)
-    assert ledger.undo_last().place == "A"
-
-
-def test_json_writes_are_atomic(tmp_path):
-    ledger = ExpenseLedger(tmp_path)
-    ledger.add(date(2026, 10, 1), "A", 5)
-    with patch("agents.expenditure.ledger.os.replace", side_effect=OSError("disk")):
-        with pytest.raises(OSError):
-            ledger.add(date(2026, 10, 2), "B", 6)
-    # The old history file is intact and no temp files are left behind
-    assert len(json.loads((tmp_path / "history.json").read_text())) == 1
-    assert sorted(p.name for p in tmp_path.iterdir()) == [".lock", "2026-10.txt", "history.json"]
-
-
-def _add_many(root, place, n):
-    ledger = ExpenseLedger(root)
-    for _ in range(n):
-        ledger.add(date(2026, 10, 18), place, 1)
-
-
-def test_concurrent_adds_from_threads_and_processes_lose_nothing(tmp_path):
-    import multiprocessing
-    import threading
-
-    procs = [multiprocessing.get_context("spawn").Process(target=_add_many, args=(tmp_path, f"P{i}", 25))
-             for i in range(2)]
-    threads = [threading.Thread(target=_add_many, args=(tmp_path, f"T{i}", 25)) for i in range(2)]
-    for w in procs + threads:
-        w.start()
-    for w in procs + threads:
-        w.join()
-    assert len((tmp_path / "2026-10.txt").read_text().splitlines()) == 100
-    assert len(json.loads((tmp_path / "history.json").read_text())) == 100
-
-
-def test_lock_is_reentrant(tmp_path):
-    ledger = ExpenseLedger(tmp_path)
-    with ledger.locked(), ledger.locked():
-        ledger.add(date(2026, 10, 18), "X", 1)
-    ledger.add(date(2026, 10, 18), "Y", 1)  # fully released afterwards
-    assert len((tmp_path / "2026-10.txt").read_text().splitlines()) == 2
+    ledger.add(date(2026, 10, 2), "B", 50)
+    ledger.add(date(2026, 10, 3), "C", 500)
+    ledger.undo_last()
+    assert ledger.top_expenses(2026, 10, limit=5) == [_e(date(2026, 10, 2), "B", "50.00"), _e(date(2026, 10, 1), "A", "5.00")]
+    assert ledger.top_expenses(2026, 10, limit=1) == [_e(date(2026, 10, 2), "B", "50.00")]

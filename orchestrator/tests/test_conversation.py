@@ -30,7 +30,7 @@ def test_history_survives_restart_and_empty_answers_are_skipped(tmp_path):
 
 def test_store_failures_never_raise():
     class Broken:
-        def load(self, *a):
+        def get(self, *a):
             raise OSError("disk")
 
         def append(self, *a):
@@ -39,3 +39,13 @@ def test_store_failures_never_raise():
     memory = ConversationMemory(Broken())
     assert memory.recent("chat") == ""
     memory.record("chat", "hi", "Hello!", ["a"])
+
+
+def test_recent_hides_tool_call_markup_left_in_older_turns(tmp_path):
+    store = SessionManager(tmp_path / "s.db")
+    from langchain_core.messages import AIMessage, HumanMessage
+    store.append("orchestrator", "chat", [
+        HumanMessage(content="is my return filed?"),
+        AIMessage(content='Checking.<invoke name="Skill"><parameter name="a">x</parameter></invoke>', name="fbr"),
+    ])
+    assert ConversationMemory(store).recent("chat") == "user: is my return filed?\nfbr: Checking."

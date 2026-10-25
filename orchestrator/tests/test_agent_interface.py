@@ -1,5 +1,6 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,10 +23,10 @@ def facade():
         yield OrchestratorAgent(), graph
 
 
-def test_ask_delegates_with_session_and_owner(facade):
+def test_ask_delegates_with_session(facade):
     agent, graph = facade
-    assert agent.ask("hi", session_id="s", is_owner=True) == "sync answer"
-    graph.ask.assert_called_once_with("hi", session_id="s", is_owner=True)
+    assert agent.ask("hi", session_id="s") == "sync answer"
+    graph.ask.assert_called_once_with("hi", session_id="s", on_route=ANY)
 
 
 def test_ask_stream_yields_tokens(facade):
@@ -35,8 +36,22 @@ def test_ask_stream_yields_tokens(facade):
 
 def test_aask_awaits_the_graph(facade):
     agent, graph = facade
-    assert asyncio.run(agent.aask("hi", session_id="s", is_owner=True)) == "async answer"
-    graph.aask.assert_awaited_once_with("hi", session_id="s", is_owner=True)
+    assert asyncio.run(agent.aask("hi", session_id="s")) == "async answer"
+    graph.aask.assert_awaited_once_with("hi", session_id="s", on_route=ANY)
+
+
+def test_aask_forwards_each_picked_agent_to_on_route(facade):
+    agent, graph = facade
+    entry = SimpleNamespace(name="expenditure_tracker")
+
+    async def fake_aask(prompt, **kwargs):
+        kwargs["on_route"](entry)
+        return "done"
+
+    graph.aask = fake_aask
+    seen = []
+    assert asyncio.run(agent.aask("hi", session_id="s", on_route=seen.append)) == "done"
+    assert seen == [entry]
 
 
 def test_astream_yields_tokens(facade):
@@ -46,7 +61,7 @@ def test_astream_yields_tokens(facade):
         return [t async for t in agent.astream("hi", session_id="s")]
 
     assert asyncio.run(collect()) == ["x", "y"]
-    graph.astream_tokens.assert_called_once_with("hi", session_id="s", is_owner=False)
+    graph.astream_tokens.assert_called_once_with("hi", session_id="s")
 
 
 def test_close_closes_the_graph(facade):

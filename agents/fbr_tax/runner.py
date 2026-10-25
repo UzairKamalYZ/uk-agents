@@ -41,7 +41,9 @@ _ALLOWED_TOOLS = [
     "mcp__claude-in-chrome",
     f"mcp__{TRACKER}",
 ]
-_BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
+# "Skill" must be here: skills= below only grants Skill(<name>) — without the tool itself the
+# model has no way to run the skill and writes the call out as text, which reached the user.
+_BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Skill"]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS fbr_tax_sessions (

@@ -6,6 +6,7 @@ from core.src.model.llm_factory import create_llm
 
 class TestCreateLlm(unittest.TestCase):
 
+    @patch("core.src.model.llm_factory.Config.ANTHROPIC_API", True)
     @patch("core.src.model.llm_factory.ChatAnthropic")
     def test_should_create_chat_anthropic_for_anthropic_provider(self, mock_chat):
         llm = create_llm("anthropic", "claude-opus-5-5")

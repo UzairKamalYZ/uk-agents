@@ -15,8 +15,6 @@ by appending an entry — no code changes required:
 
 ``"{python}"`` in a command is replaced by the running interpreter, and such a
 server is launched from the project root so ``-m package.module`` resolves.
-``"owner_only": true`` keeps a server out of the default tool set
-(``langchain_tools()`` with no ``server_name``); request it by name instead.
 Stdio servers start with a minimal environment (HOME, PATH, …) so secrets in
 ``.env`` don't leak to third-party packages; list the variables a server needs
 in ``"env": ["SOME_API_KEY"]``.  ``{python}`` servers (our own code) get the
@@ -62,7 +60,6 @@ def _load_registry(config_path: Path) -> MCPRegistry:
         name = entry.get("name")
         command = entry.get("command")
         url = entry.get("url")
-        owner_only = bool(entry.get("owner_only", False))
 
         if name and command:
             own_code = "{python}" in command
@@ -76,7 +73,7 @@ def _load_registry(config_path: Path) -> MCPRegistry:
                 env = {k: os.environ[k] for k in entry.get("env", []) if k in os.environ}
             logger.info("mcp-tools: adding stdio server '%s'", name)
             timeout = float(entry.get("timeout", DEFAULT_TIMEOUT))
-            registry.register(name, command, cwd=cwd, owner_only=owner_only, timeout=timeout, env=env)
+            registry.register(name, command, cwd=cwd, timeout=timeout, env=env)
 
         elif name and url:
             # Build query params: resolve any api_key_env reference from environment
@@ -94,7 +91,7 @@ def _load_registry(config_path: Path) -> MCPRegistry:
                     )
             logger.info("mcp-tools: adding HTTP server '%s' → %s", name, url)
             timeout = float(entry.get("timeout", DEFAULT_TIMEOUT))
-            registry.register_http(name, url, params=params, owner_only=owner_only, timeout=timeout)
+            registry.register_http(name, url, params=params, timeout=timeout)
 
         else:
             logger.warning("mcp-tools: skipping invalid entry %s", entry)

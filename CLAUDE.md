@@ -161,9 +161,8 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `INTERACTION_FILE` | `agentP/src/prompts/interaction.json` | CLI interaction strings path |
 | `REFORMULATION_PROMPT` | `agentP/src/prompts/reformulated_prompt.txt` | Query rewrite template path |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from @BotFather |
-| `TELEGRAM_OWNER_ID` | _(empty)_ | Owner's Telegram user id or `@username` (comma-separate several; a channel id works for posts made as that channel). Send `/whoami` to the bot to see yours. Required for agents marked `"owner_only": true` in `agents.json` (the expense tracker) |
 | `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
-| `EXPENSES_DIR` | _(per-user data dir)_ | Expense ledger directory: monthly files, `inputs.log` (every message the expense agent received), history and pending item. Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
+| `EXPENSES_DIR` | _(per-user data dir)_ | Folder for the expense ledger `expenses.db` (SQLite: expenses, every message the expense agent received, the pending item). Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
 | `ROUTER_PROMPT_FILE` | `orchestrator/prompts/router.txt` | Orchestrator router prompt: message cleanup + agent planning in one call |
 | `CONFIRMATION_PROMPT_FILE` | `orchestrator/prompts/confirmation.txt` | Prompt that classifies the reply to a pending item (confirm / cancel / correction / unrelated) |
 | `CHECKPOINT_DB_FILE` | `checkpoints.db` | SQLite checkpointer for the orchestrator graph; holds only conversations paused for a confirmation (deleted once a run finishes). Relative → from the project root |
@@ -288,8 +287,8 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 | CLI interaction messages | `agentP/src/prompts/interaction.json` |
 | URLs for web scraping | `agentP/urls.txt` |
 | Runtime log | `logs/agent.log` |
-| Agent registry (orchestrator) | `agents.json` — `"owner_only": true` means only the bot owner (`TELEGRAM_OWNER_ID`) may use the agent; others are refused, and a non-owner message in a chat paused on its confirmation runs as a separate turn |
-| MCP server registry | `mcp.json` — `"{python}"` in a command = current interpreter, launched from the project root; `"owner_only": true` keeps the server out of the default tool set (`langchain_tools()` with no `server_name`), so only an agent that asks for it by name gets its tools; `"timeout": <seconds>` (default 60) caps each stdio call — a server that doesn't answer in time is killed and restarted on the next call |
+| Agent registry (orchestrator) | `agents.json` |
+| MCP server registry | `mcp.json` — `"{python}"` in a command = current interpreter, launched from the project root; `"timeout": <seconds>` (default 60) caps each stdio call — a server that doesn't answer in time is killed and restarted on the next call |
 
 ---
 
@@ -305,4 +304,5 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 - **MCP**: `core/src/model/mcp_registry.py` uses the official `mcp` SDK `Client` (one persistent connection per server on its own background loop). Tests run real MCP servers — in-process `MCPServer` via `MCPRegistry.register_server()` or a stdio script (`core/tests/model/mcp_test_server.py`).
 - **Tests never stub `sys.modules` for project code**: patch the names a test uses (`patch("clients.telegram.main.OrchestratorAgent")`). `core/tests/conftest.py` still stubs heavy third-party ML packages (sentence-transformers, pinecone).
 - **Confirmations are LangGraph interrupts**: an agent that leaves a pending item (`BaseAgent.pending_summary`) makes the orchestrator pause in the `confirmation` node via `interrupt()`; the next message on that session resumes it with `Command(resume=...)` (`MultiAgentGraph._start`). Routing+cleanup (one `router` call per message) and classification use structured output (`llm.with_structured_output(Model, method="json_schema")`), which `ChatClaudeCode` also implements — test fakes for orchestrator LLMs must provide `with_structured_output`.
+- **Output guard** (`core/src/output_guard.py`): answers never show tool-call markup (`<invoke>`, `<parameter>`, `<function_calls>`, thinking, system reminders). `AgentNode`, the synthesiser, the token stream and `GreenAPIClient.send_message` scrub every outgoing answer and log a warning naming the agent; an answer that was only markup becomes `WITHHELD_REPLY`. A new outbound path that bypasses the orchestrator must call `scrub()` (or `StreamScrubber` for streams) itself. Leaks usually mean a model was told about a tool it cannot call — e.g. an agent's system prompt describing a skill while the request went to the plain LLM pipeline (an agent overriding `ask()` but not `aask()`; `BaseAgent.aask` now falls back to that `ask()`).
 - **Session persistence**: Chat history is stored in `SESSION_DB_FILE` (SQLite). The file is created automatically on first run at the project root.

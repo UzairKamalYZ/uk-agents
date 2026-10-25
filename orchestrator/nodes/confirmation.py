@@ -106,7 +106,7 @@ class ConfirmationNode:
             return {"awaiting": None, "next": END}
 
         logger.info("[confirmation] pausing for %s: %s", name, summary)
-        reply: str = interrupt({"agent": name, "summary": summary, "owner_only": entry.owner_only})
+        reply: str = interrupt({"agent": name, "summary": summary})
 
         # ---- resumed with the user's next message ----
         fresh_turn = {"raw_input": reply, "user_input": reply, "agent_outputs": {}, "turns": 0, "plan": []}

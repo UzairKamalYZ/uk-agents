@@ -18,11 +18,9 @@ def _spec(name, **extra):
     return {"name": name, "description": "d", "class": f"{__name__}.FakeAgent", **extra}
 
 
-def test_owner_only_read_and_defaults_false(tmp_path):
-    f = _write(tmp_path, [_spec("a", owner_only=True), _spec("b")])
-    entries = {e.name: e for e in load_agents(f)}
-    assert entries["a"].owner_only is True
-    assert entries["b"].owner_only is False
+def test_agents_have_no_owner_only_flag(tmp_path):
+    entry = load_agents(_write(tmp_path, [_spec("a", owner_only=True)]))[0]  # an old key is ignored
+    assert not hasattr(entry, "owner_only")
 
 
 def test_display_name_and_remarks_read_with_fallback_label(tmp_path):

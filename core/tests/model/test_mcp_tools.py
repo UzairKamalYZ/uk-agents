@@ -126,40 +126,15 @@ def _server(*tool_names):
     return server
 
 
-def _registry_with(owner_only_name: str) -> MCPRegistry:
+def test_default_tool_set_includes_every_server():
     registry = MCPRegistry()
     registry.register_server("public", _server("pub_tool"))
-    registry.register_server(owner_only_name, _server("priv_tool"), owner_only=True)
-    return registry
-
-
-def test_default_tool_set_excludes_owner_only_servers():
-    registry = _registry_with("expenses")
+    registry.register_server("expenses", _server("priv_tool"))
     try:
-        assert [t.name for t in registry.langchain_tools()] == ["pub_tool"]
-        assert registry._servers["expenses"]._client is None  # never even connected
-    finally:
-        registry.close()
-
-
-def test_owner_only_server_still_available_by_name():
-    registry = _registry_with("expenses")
-    try:
+        assert sorted(t.name for t in registry.langchain_tools()) == ["priv_tool", "pub_tool"]
         assert [t.name for t in registry.langchain_tools(server_name="expenses")] == ["priv_tool"]
     finally:
         registry.close()
-
-
-def test_mcp_json_owner_only_flag_is_recorded():
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        cfg = Path(d) / "mcp.json"
-        cfg.write_text(json.dumps({"servers": [
-            {"name": "a", "command": ["npx", "a"]},
-            {"name": "b", "command": ["npx", "b"], "owner_only": True},
-        ]}))
-        registry = _load_registry(cfg)
-    assert registry.is_owner_only("b") and not registry.is_owner_only("a")
 
 
 def test_optional_anyof_param_keeps_its_type():

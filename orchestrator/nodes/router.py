@@ -10,6 +10,10 @@ take a normaliser call plus a supervisor call before and after every agent:
      → digits, relative dates → YYYY-MM-DD) → state["user_input"].
   2. Plans the turn: the ordered list of agents to run → state["plan"].
 
+The session's recent turns (state["history"]) go in a human message before the
+user's message, so a follow-up ("yes", "and for last month?") is rewritten into
+a self-contained request and routed to the agent that asked.
+
 The graph then runs the plan without asking an LLM again between agents
 (graph._route_plan), and the synthesiser merges the outputs.
 
@@ -85,9 +89,14 @@ class RouterNode:
         raw = state.get("raw_input") or state["user_input"]
         today = self._today()
         prompt = self._prompt_template.replace("{today}", f"{today.isoformat()} ({today.strftime('%A')})")
+        # The user's text (and earlier turns, which hold user text too) go in human
+        # messages, never the system prompt; the message to route is always the last one
+        messages = [SystemMessage(content=prompt)]
+        if state.get("history"):
+            messages.append(HumanMessage(content=f"RECENT CONVERSATION (oldest first):\n{state['history']}"))
+        messages.append(HumanMessage(content=raw))
         try:
-            # The user's text goes in the human message, never the system prompt
-            reply = await self._llm.ainvoke([SystemMessage(content=prompt), HumanMessage(content=raw)])
+            reply = await self._llm.ainvoke(messages)
         except Exception:
             logger.exception("[router] routing call failed — raw input, no agents")
             return {"user_input": raw, "plan": []}

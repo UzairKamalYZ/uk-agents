@@ -71,3 +71,21 @@ def test_load_is_idempotent_and_reused_by_transcribe():
         t.load()
         t.transcribe("a.ogg")
     cls.assert_called_once_with("tiny", device="cpu", compute_type="int8")
+
+
+def test_faster_whisper_decodes_a_telegram_voice_note(tmp_path):
+    # Real PyAV + faster-whisper decoding (no model): catches incompatible versions,
+    # e.g. PyAV 19 dropping av.open(metadata_errors=...) that faster-whisper 1.2 passes.
+    import av
+    import numpy as np
+    from faster_whisper import decode_audio
+
+    path = tmp_path / "voice.ogg"
+    with av.open(str(path), "w") as container:  # Telegram voice notes are OGG/Opus
+        stream = container.add_stream("libopus", rate=48000)
+        stream.layout = "mono"
+        frame = av.AudioFrame.from_ndarray(np.zeros((1, 48000), dtype="float32"), format="flt", layout="mono")
+        frame.sample_rate = 48000
+        for packet in [*stream.encode(frame), *stream.encode(None)]:
+            container.mux(packet)
+    assert decode_audio(str(path)).shape == (16000,)  # 1 s resampled to 16 kHz

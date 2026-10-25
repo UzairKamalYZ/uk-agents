@@ -175,3 +175,29 @@ class TestPendingHooksDefault(unittest.TestCase):
         self.assertIsNone(agent.pending_summary("s"))
         self.assertEqual(agent.confirm_pending("s"), "")
         self.assertIsNone(agent.discard_pending("s"))
+
+
+class _AskOnlyAgent(_MinimalAgent):
+    """Overrides ask() (its own way of answering) but not aask()."""
+    def ask(self, prompt, stream=False, session_id=None):
+        return f"own answer to {prompt} ({session_id})"
+
+
+@patch("core.src.base_agent.LlmModelGraph")
+@patch("core.src.base_agent.create_llm")
+def test_aask_falls_back_to_an_overridden_ask(mock_llm, mock_graph):
+    import asyncio
+    agent = _AskOnlyAgent(session_id="default-s")
+    assert asyncio.run(agent.aask("hi", session_id="chat")) == "own answer to hi (chat)"
+    assert asyncio.run(agent.aask("hi")) == "own answer to hi (default-s)"
+    agent.model.aask.assert_not_called()
+
+
+@patch("core.src.base_agent.LlmModelGraph")
+@patch("core.src.base_agent.create_llm")
+def test_aask_uses_the_model_when_ask_is_not_overridden(mock_llm, mock_graph):
+    import asyncio
+    from unittest.mock import AsyncMock
+    agent = _MinimalAgent(session_id="s")
+    agent.model.aask = AsyncMock(return_value="model answer")
+    assert asyncio.run(agent.aask("hi")) == "model answer"

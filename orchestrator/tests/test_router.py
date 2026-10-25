@@ -54,3 +54,27 @@ def test_plan_capped_at_max_agent_turns():
 def test_llm_error_passes_raw_text_with_empty_plan():
     node, _ = _node(RuntimeError("down"))
     assert _run(node) == {"user_input": "raw message", "plan": []}
+
+
+def _capturing_node():
+    seen = []
+    llm = MagicMock()
+    llm.with_structured_output.return_value = RunnableLambda(
+        lambda messages: seen.append(messages) or SimpleNamespace(text="t", agents=[])
+    )
+    return RouterNode(llm, "SYSTEM", "", {"a"}, today=lambda: date(2026, 10, 18)), seen
+
+
+def test_history_goes_in_a_human_message_before_the_user_message():
+    node, seen = _capturing_node()
+    asyncio.run(node({"user_input": "yes", "raw_input": "yes", "history": "user: Aldi 10\na: Saved. Breakdown?"}))
+    system, history, message = seen[0]
+    assert system.content == "SYSTEM"
+    assert history.type == "human" and history.content.endswith("user: Aldi 10\na: Saved. Breakdown?")
+    assert message.type == "human" and message.content == "yes"
+
+
+def test_no_history_message_for_a_new_conversation():
+    node, seen = _capturing_node()
+    asyncio.run(node({"user_input": "hi", "raw_input": "hi", "history": ""}))
+    assert [m.content for m in seen[0]] == ["SYSTEM", "hi"]

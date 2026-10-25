@@ -36,6 +36,8 @@ dependencies = [
     "claude-agent-sdk>=0.2.168",
     "mcp>=2.0",
     "faster-whisper>=1.1.0",
+    # faster-whisper 1.2.1 calls av.open(metadata_errors=...), which PyAV 19 removed
+    "av<19",
 ]
 
 [dependency-groups]

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import threading
 from datetime import datetime
@@ -54,6 +55,10 @@ class FbrTaxAgent(BaseAgent):
     def ask(self, prompt: str, stream: bool = False, session_id: str = None):
         reply = self._ask(prompt, session_id or self.session_id)
         return iter([reply]) if stream else reply
+
+    async def aask(self, prompt: str, session_id: str = None) -> str:
+        # The turn is a whole Claude Code + Chrome session (blocking) — run it off the event loop
+        return await asyncio.to_thread(self._ask, prompt, session_id or self.session_id)
 
     def _ask(self, prompt: str, session_id: str) -> str:
         if not self._runner.skill_installed():

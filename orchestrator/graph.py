@@ -38,6 +38,18 @@ on the next message and resume it with Command(resume=<message>) instead of
 starting a new run.  Threads are deleted once a run finishes without pausing,
 so the checkpoint database only ever holds paused conversations.
 
+CONVERSATION MEMORY
+-------------------
+The last few user/assistant turns of each session (ConversationMemory, kept in
+SESSION_DB_FILE) go into state["history"] for the router, so a follow-up such
+as "yes" or "and for last month?" is routed with its context.  Every finished
+run (or pause) records its turn.
+
+ANNOUNCING THE AGENT
+--------------------
+ask()/aask() take on_route: it is called with each agent's AgentEntry just
+before that agent runs, so a client can show who is working on the query.
+
 TURN CAP
 --------
 _route_plan enforces MAX_AGENT_TURNS (defined in state.py): once that many
@@ -57,7 +69,7 @@ import os
 import weakref
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiosqlite
 
@@ -71,6 +83,8 @@ from langgraph.types import Command
 from core.src.aio import BackgroundLoop
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
+from core.src.model.session_manager import HistoryStore, shared_session_store
+from core.src.output_guard import StreamScrubber
 from core.src.utils import load_prompt
 
 # Register LangSmith env vars so traces from the orchestrator appear in the
@@ -81,7 +95,8 @@ os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
 if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
-from .agent_registry import load_agents
+from .agent_registry import AgentEntry, load_agents
+from .conversation import ConversationMemory
 from .nodes import AgentNode, ConfirmationNode, RouterNode, SynthesiserNode
 from .state import MAX_AGENT_TURNS, GraphState
 
@@ -147,7 +162,12 @@ class MultiAgentGraph:
        unless one is passed in), which is what lets a run pause and resume.
     """
 
-    def __init__(self, checkpointer: BaseCheckpointSaver | None = None) -> None:
+    def __init__(
+        self, checkpointer: BaseCheckpointSaver | None = None, history_store: HistoryStore | None = None
+    ) -> None:
+
+        # Recent turns per session, so follow-ups ("yes", "do that too") keep their context
+        self._memory = ConversationMemory(history_store or shared_session_store(Config.SESSION_DB_FILE))
 
         # -----------------------------------------------------------------
         # 1. Shared LLM — same model drives router, synthesiser and confirmation
@@ -205,7 +225,7 @@ class MultiAgentGraph:
         # Dynamic agent nodes — one per enabled entry in agents.json; after each
         # one the plan decides what runs next (no LLM call in between)
         for agent in agents:
-            node_fn = AgentNode(agent.name, agent.instance, owner_only=agent.owner_only)
+            node_fn = AgentNode(agent.name, agent.instance)
             builder.add_node(agent.name, node_fn)
             builder.add_conditional_edges(agent.name, _route_plan, route_map)
 
@@ -243,8 +263,9 @@ class MultiAgentGraph:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _initial_state(user_input: str, session_id: str, is_owner: bool) -> GraphState:
-        """Fresh state for one user turn: everything empty, turns at zero."""
+    def _initial_state(user_input: str, session_id: str, history: str = "") -> GraphState:
+        """Fresh state for one user turn: the session's recent conversation, everything else
+        empty and turns at zero."""
         return {
             "user_input": user_input,
             "session_id": session_id,
@@ -254,9 +275,9 @@ class MultiAgentGraph:
             "plan": [],
             "next": "",
             "turns": 0,
-            "is_owner": is_owner,
             "raw_input": user_input,
             "awaiting": None,
+            "history": history,
         }
 
     @staticmethod
@@ -278,7 +299,7 @@ class MultiAgentGraph:
         interrupts = (await self._graph.aget_state(self._config(thread_id))).interrupts
         return interrupts[0].value if interrupts else None
 
-    async def _start(self, user_input: str, session_id: str, is_owner: bool) -> tuple[Any, dict]:
+    async def _start(self, user_input: str, session_id: str) -> tuple[Any, dict]:
         """(graph input, config) for this message: resume a paused thread, or start fresh."""
         paused = await self._pending_interrupt(session_id)
         if paused is not None and not await asyncio.to_thread(self._still_pending, paused.get("agent"), session_id):
@@ -287,19 +308,12 @@ class MultiAgentGraph:
                         session_id, paused.get("agent"))
             paused = None
         if paused is not None:
-            if paused.get("owner_only") and not is_owner:
-                # Someone else in the chat can't answer the owner's question — run their
-                # message on a side thread and leave the owner's confirmation paused.
-                logger.info("[MultiAgentGraph] %s paused on owner-only %s — non-owner turn on side thread",
-                            session_id, paused.get("agent"))
-                thread_id = f"{session_id}#guest"
-                await self._checkpointer.adelete_thread(thread_id)
-                return self._initial_state(user_input, session_id, is_owner), self._config(thread_id)
             logger.info("[MultiAgentGraph] resuming %s (pending on %s)", session_id, paused.get("agent"))
-            return Command(resume=user_input, update={"is_owner": is_owner}), self._config(session_id)
+            return Command(resume=user_input), self._config(session_id)
         # Nothing paused: drop any leftovers from a run that crashed mid-way
         await self._checkpointer.adelete_thread(session_id)
-        return self._initial_state(user_input, session_id, is_owner), self._config(session_id)
+        history = await asyncio.to_thread(self._memory.recent, session_id)
+        return self._initial_state(user_input, session_id, history), self._config(session_id)
 
     def _still_pending(self, agent_name: str | None, session_id: str) -> bool:
         entry = self._agents.get(agent_name)
@@ -311,44 +325,87 @@ class MultiAgentGraph:
             logger.exception("[MultiAgentGraph] pending_summary failed for %s — not resuming", agent_name)
             return False
 
+    async def _record_turn(self, config: dict, user_input: str, answer: str) -> None:
+        """Remember this turn for the router, attributed to the agents that answered it."""
+        try:
+            outputs = (await self._graph.aget_state(config)).values.get("agent_outputs", {})
+        except Exception:  # memory is a nicety — never fail the answer over it
+            logger.exception("[MultiAgentGraph] could not read the finished run's outputs")
+            return
+        agents = [name for name in outputs if name != "synthesiser"]
+        session_id = config["configurable"]["thread_id"]
+        await asyncio.to_thread(self._memory.record, session_id, user_input, answer, agents)
+
+    def _announce(self, on_route: Callable[[AgentEntry], None], name: str) -> None:
+        try:
+            on_route(self._agents[name])
+        except Exception:  # a client callback must never break the request
+            logger.exception("[MultiAgentGraph] on_route callback failed for %s", name)
+
     async def _finish(self, config: dict) -> None:
         """Keep a thread only while it is paused for a confirmation."""
         thread_id = config["configurable"]["thread_id"]
         if await self._pending_interrupt(thread_id) is None:
             await self._checkpointer.adelete_thread(thread_id)
 
-    async def _run_ask(self, user_input: str, session_id: str, is_owner: bool) -> str:
+    async def _run_ask(
+        self, user_input: str, session_id: str,
+        on_route: Callable[[AgentEntry], None] | None = None,
+    ) -> str:
         """
         Run the pipeline (or resume it) and return the synthesiser's answer.
 
         The synthesiser stores its answer in agent_outputs["synthesiser"]; the
         last one written during this run is the reply (a run that pauses for
         a confirmation has already answered with the agent's question).
+
+        on_route is called with each agent's entry just before it runs: the next
+        agent in the router's plan, or the one a confirmation hands over to.
         """
         async with self._session_lock(session_id):
-            graph_input, config = await self._start(user_input, session_id, is_owner)
+            graph_input, config = await self._start(user_input, session_id)
             answer = ""
+            plan: list[str] = []
+            ran: set[str] = set()
+            announced: set[str] = set()
             try:
                 async for event in self._graph.astream(graph_input, config, stream_mode="updates"):
                     update = event.get("synthesiser")
                     if isinstance(update, dict):
                         answer = update.get("agent_outputs", {}).get("synthesiser", answer)
+                    if on_route is None:
+                        continue
+                    for node, node_update in event.items():
+                        if node == "router" and isinstance(node_update, dict):
+                            plan = node_update.get("plan", [])
+                        elif node == "confirmation" and isinstance(node_update, dict):
+                            plan = [node_update.get("next")]
+                        elif node in self._agents:
+                            ran.add(node)
+                    upcoming = next((n for n in plan if n in self._agents and n not in ran), None)
+                    if upcoming is not None and upcoming not in announced:
+                        announced.add(upcoming)
+                        self._announce(on_route, upcoming)
+                await self._record_turn(config, user_input, answer)
             finally:
                 await self._finish(config)
         if not answer:
             logger.warning("[MultiAgentGraph] no synthesiser output in final state")
         return answer
 
-    async def _run_tokens(self, user_input: str, session_id: str, is_owner: bool) -> AsyncIterator[str]:
+    async def _run_tokens(self, user_input: str, session_id: str) -> AsyncIterator[str]:
         """Yield text tokens from the synthesiser LLM as they are generated."""
         async with self._session_lock(session_id):
-            graph_input, config = await self._start(user_input, session_id, is_owner)
+            graph_input, config = await self._start(user_input, session_id)
             # stream_mode="messages" yields (message, metadata) tuples as they happen:
             # AIMessageChunk tokens while the synthesiser LLM writes, plus the complete
             # AIMessage each node returns.  metadata["langgraph_node"] names the node.
             # The synthesiser can run more than once per call (e.g. confirm, then the
             # next question), so "already streamed" is tracked per synthesiser run.
             streamed_runs: set[str] = set()
+            answer: list[str] = []
+            # Agent outputs are scrubbed in AgentNode; the merge LLM's tokens are scrubbed here
+            guard = StreamScrubber()
             try:
                 async for chunk, metadata in self._graph.astream(graph_input, config, stream_mode="messages"):
                     if metadata.get("langgraph_node") != "synthesiser":
@@ -361,8 +418,16 @@ class MultiAgentGraph:
                     elif run in streamed_runs:
                         continue
                     # .text skips thinking / tool-call blocks (empty for those chunks)
-                    if chunk.text:
-                        yield chunk.text
+                    if chunk.text and (safe := guard.feed(chunk.text)):
+                        answer.append(safe)
+                        yield safe
+                if rest := guard.flush():
+                    answer.append(rest)
+                    yield rest
+                if guard.found:
+                    logger.warning("[MultiAgentGraph] streamed answer contained tool-call markup %s — removed",
+                                   sorted(guard.found))
+                await self._record_turn(config, user_input, "".join(answer))
             finally:
                 await self._finish(config)
 
@@ -370,27 +435,37 @@ class MultiAgentGraph:
     # Public interface — async (REST, Telegram) and sync (cron, scripts)
     # ------------------------------------------------------------------
 
-    async def aask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
-        """Answer one message. Messages on the same session are handled one at a time."""
-        return await self._runtime.arun(self._run_ask(user_input, session_id, is_owner))
+    async def aask(
+        self, user_input: str, session_id: str = "default", *,
+        on_route: Callable[[AgentEntry], None] | None = None,
+    ) -> str:
+        """Answer one message. Messages on the same session are handled one at a time.
+
+        on_route runs on the orchestrator's own loop thread, so it must not block;
+        hand any client work back to the client's loop (e.g. run_coroutine_threadsafe).
+        """
+        return await self._runtime.arun(self._run_ask(user_input, session_id, on_route))
 
     async def astream_tokens(
-        self, user_input: str, session_id: str = "default", *, is_owner: bool = False
+        self, user_input: str, session_id: str = "default"
     ) -> AsyncIterator[str]:
         """Async generator of answer tokens as the synthesiser writes them."""
-        async for token in self._runtime.aiterate(self._run_tokens(user_input, session_id, is_owner)):
+        async for token in self._runtime.aiterate(self._run_tokens(user_input, session_id)):
             yield token
 
-    def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
+    def ask(
+        self, user_input: str, session_id: str = "default", *,
+        on_route: Callable[[AgentEntry], None] | None = None,
+    ) -> str:
         """Blocking aask() for sync callers."""
-        return self._runtime.run(self._run_ask(user_input, session_id, is_owner))
+        return self._runtime.run(self._run_ask(user_input, session_id, on_route))
 
-    def stream_tokens(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> Iterator[str]:
+    def stream_tokens(self, user_input: str, session_id: str = "default") -> Iterator[str]:
         """Blocking astream_tokens() for sync callers."""
-        yield from self._runtime.iterate(self._run_tokens(user_input, session_id, is_owner))
+        yield from self._runtime.iterate(self._run_tokens(user_input, session_id))
 
     def pending_interrupt(self, session_id: str) -> dict | None:
-        """What this session is paused on (agent, summary, owner_only), or None."""
+        """What this session is paused on (agent, summary), or None."""
         return self._runtime.run(self._pending_interrupt(session_id))
 
     def close(self) -> None:

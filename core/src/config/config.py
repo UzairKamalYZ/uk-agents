@@ -38,7 +38,7 @@ class Config:
     ANTHROPIC_API = os.getenv("ANTHROPIC_API", "true").lower() == "true"
     SENTENCE_TRANSFORMER_MODEL = os.getenv("SENTENCE_TRANSFORMER_MODEL")
     MEMORY_FILE = os.getenv("MEMORY_FILE")
-    URLS_FILE = os.getenv("URLS_FILE")
+    URLS_FILE = _project_path("URLS_FILE", "agents/property/urls.txt")
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
@@ -48,8 +48,6 @@ class Config:
     REFORMULATION_PROMPT = _project_path("REFORMULATION_PROMPT", "agents/property/prompts/reformulated_prompt.txt")
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    # Telegram user id of the owner; only they can use the expense tracker
-    TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_ID", "")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "uk-agents")
@@ -57,7 +55,9 @@ class Config:
     API_KEY = os.getenv("API_KEY", "")
 
     # SQLite file for persistent session history (relative → from the project root)
-    SESSION_DB_FILE = str(_PROJECT_ROOT / os.getenv("SESSION_DB_FILE", "sessions.db"))
+    SESSION_DB_FILE = _project_path("SESSION_DB_FILE", "sessions.db")
+    # Prompt the scheduled cron client sends on every run
+    CRON_SEARCH_PROMPT = os.getenv("CRON_SEARCH_PROMPT", "Find 2-bedroom apartments in Poland under 1000")
     # SQLite file where the orchestrator keeps conversations paused for a confirmation
     CHECKPOINT_DB_FILE = str(_PROJECT_ROOT / os.getenv("CHECKPOINT_DB_FILE", "checkpoints.db"))
     # Selenium scraping browser connection string
@@ -74,6 +74,13 @@ class Config:
     # Expense ledger + input log — kept outside the project in the user data dir;
     # a relative EXPENSES_DIR is resolved from the project root, "~" is expanded
     EXPENSES_DIR = str(_PROJECT_ROOT / Path(os.getenv("EXPENSES_DIR") or _user_data_dir() / "expenses").expanduser())
+    # FBR (Pakistan) tax filing — the project holding the fbr-iris-filing skill and its snapshots/;
+    # a relative path is resolved from the project root, "~" is expanded
+    FBR_TAX_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DIR") or "~/work/fbr-tax-filing").expanduser())
+    # The FBR agent's own records (filings.db: each tax year's submitted/draft status)
+    FBR_TAX_DATA_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DATA_DIR") or _user_data_dir() / "fbr_tax").expanduser())
+    # Tool calls one filing step may take (reading a whole return is many browser actions)
+    FBR_TAX_MAX_TURNS = int(os.getenv("FBR_TAX_MAX_TURNS", "200"))
     # Local faster-whisper model size for voice transcription
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))

@@ -12,6 +12,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.memory import InMemorySaver
 
+from core.src.model.session_manager import InMemoryHistoryStore
 from orchestrator.agent_registry import AgentEntry
 from orchestrator.nodes.confirmation import DISCARDED_REPLY
 
@@ -42,6 +43,7 @@ class ScriptedLLM:
         self.normalise = normalise or (lambda text: text)
         self.synthesiser = synthesiser
         self.calls: list[str] = []
+        self.router_messages: list[list] = []  # every message list the router was sent
 
     def with_structured_output(self, schema, **kwargs):
         def run(messages):
@@ -49,6 +51,7 @@ class ScriptedLLM:
             node = system.split()[0].lower()
             self.calls.append(node)
             if node == "router":
+                self.router_messages.append(messages)
                 plan = self.router(human) if callable(self.router) else (self.router.pop(0) if self.router else [])
                 if isinstance(plan, Exception):
                     raise plan
@@ -106,7 +109,7 @@ def _agents(expense=None):
     expense = expense or FakeExpenseAgent()
     return [
         AgentEntry(CONV, "chat", conv, "anthropic", "m"),
-        AgentEntry(EXP, "spend", expense, "anthropic", "m", owner_only=True),
+        AgentEntry(EXP, "spend", expense, "anthropic", "m"),
     ]
 
 
@@ -132,13 +135,14 @@ def _load_prompt(path):
     raise AssertionError(f"unexpected prompt path {path}")
 
 
-def _build(llm, agents, checkpointer=_MEMORY, config=_CONFIG):
+def _build(llm, agents, checkpointer=_MEMORY, config=_CONFIG, history_store=None):
     with patch("orchestrator.graph.Config", config), \
          patch("orchestrator.graph.create_llm", return_value=llm), \
          patch("orchestrator.graph.load_agents", return_value=agents), \
          patch("orchestrator.graph.load_prompt", side_effect=_load_prompt):
         from orchestrator.graph import MultiAgentGraph
-        return MultiAgentGraph(checkpointer=InMemorySaver() if checkpointer is _MEMORY else checkpointer)
+        return MultiAgentGraph(checkpointer=InMemorySaver() if checkpointer is _MEMORY else checkpointer,
+                               history_store=history_store or InMemoryHistoryStore())
 
 
 def _expense_turn(**llm_kwargs):
@@ -147,7 +151,7 @@ def _expense_turn(**llm_kwargs):
     llm_kwargs.setdefault("router", [[EXP]])
     llm = ScriptedLLM(**llm_kwargs)
     graph = _build(llm, agents)
-    assert graph.ask("Colruyt 900", "s1", is_owner=True) == QUESTION
+    assert graph.ask("Colruyt 900", "s1") == QUESTION
     return graph, llm, agents[1].instance, agents[0].instance
 
 
@@ -179,7 +183,7 @@ def _recording_graph(plan, names=("a_agent", "b_agent", "c_agent"), synthesiser=
 def test_plain_turn_routes_and_leaves_no_checkpoint():
     agents = _agents()
     graph = _build(ScriptedLLM(router=[[CONV]]), agents)
-    assert graph.ask("hi", "s1", is_owner=True) == "Hello!"
+    assert graph.ask("hi", "s1") == "Hello!"
     agents[0].instance.ask.assert_called_once_with("hi", session_id="s1")
     assert graph.pending_interrupt("s1") is None
     assert graph._graph.get_state(graph._config("s1")).values == {}  # thread deleted
@@ -267,13 +271,13 @@ def test_router_keeps_user_text_out_of_system_prompt():
 def test_pending_item_pauses_the_thread():
     graph, llm, expense, _ = _expense_turn()
     paused = graph.pending_interrupt("s1")
-    assert paused == {"agent": EXP, "summary": SUMMARY, "owner_only": True}
+    assert paused == {"agent": EXP, "summary": SUMMARY}
     assert llm.count("confirmation") == 0  # classification only happens on resume
 
 
 def test_yes_resumes_and_confirms_without_routing():
     graph, llm, expense, _ = _expense_turn(confirmation=[{"verdict": "confirm", "text": "yes"}])
-    assert graph.ask("yes", "s1", is_owner=True) == SAVED
+    assert graph.ask("yes", "s1") == SAVED
     assert expense.pending is None
     assert llm.calls == ["router", "confirmation"]  # the "yes" costs one call, no routing
     assert graph.pending_interrupt("s1") is None
@@ -281,7 +285,7 @@ def test_yes_resumes_and_confirms_without_routing():
 
 def test_cancel_discards():
     graph, _, expense, _ = _expense_turn(confirmation=[{"verdict": "cancel", "text": "no"}])
-    assert graph.ask("no", "s1", is_owner=True) == DISCARDED_REPLY
+    assert graph.ask("no", "s1") == DISCARDED_REPLY
     assert expense.pending is None
     assert graph.pending_interrupt("s1") is None
 
@@ -291,7 +295,7 @@ def test_correction_goes_straight_to_agent_and_can_pause_again():
         router=[[EXP], [CONV]],
         confirmation=[{"verdict": "correction", "text": "it was €90"}],
     )
-    assert graph.ask("it was ninety", "s1", is_owner=True) == QUESTION
+    assert graph.ask("it was ninety", "s1") == QUESTION
     assert expense.asked[-1] == f"it was €90\n\n(Correction to the pending expense: {SUMMARY})"
     conv.ask.assert_not_called()
     assert llm.count("router") == 1  # the correction is not re-routed
@@ -303,7 +307,7 @@ def test_unrelated_discards_and_runs_a_fresh_turn():
         router=[[EXP], [CONV]],
         confirmation=[{"verdict": "unrelated", "text": "hello"}],
     )
-    assert graph.ask("hello", "s1", is_owner=True) == "Hello!"
+    assert graph.ask("hello", "s1") == "Hello!"
     assert expense.pending is None
     conv.ask.assert_called_once_with("hello", session_id="s1")
     assert llm.count("router") == 2
@@ -312,7 +316,7 @@ def test_unrelated_discards_and_runs_a_fresh_turn():
 
 def test_classification_failure_reasks_and_stays_paused():
     graph, _, expense, _ = _expense_turn(confirmation=[RuntimeError("API down")])
-    answer = graph.ask("yes", "s1", is_owner=True)
+    answer = graph.ask("yes", "s1")
     assert answer.startswith("Sorry, I didn't catch that. Pending: " + SUMMARY)
     assert expense.pending == SUMMARY
     assert graph.pending_interrupt("s1") is not None
@@ -321,19 +325,8 @@ def test_classification_failure_reasks_and_stays_paused():
 def test_confirm_with_missing_amount_pauses_again():
     graph, _, expense, _ = _expense_turn(confirmation=[{"verdict": "confirm", "text": "yes"}])
     expense.confirm_reply = "⚠️ I still need the amount"
-    assert graph.ask("yes", "s1", is_owner=True) == "⚠️ I still need the amount"
+    assert graph.ask("yes", "s1") == "⚠️ I still need the amount"
     assert graph.pending_interrupt("s1") is not None
-
-
-def test_non_owner_cannot_answer_owner_question():
-    graph, llm, expense, conv = _expense_turn(
-        router=[[EXP], [CONV]],
-        confirmation=[{"verdict": "confirm", "text": "yes"}],
-    )
-    assert graph.ask("yes", "s1", is_owner=False) == "Hello!"  # handled as their own turn
-    assert expense.pending == SUMMARY
-    assert graph.pending_interrupt("s1") is not None  # owner's question still waiting
-    assert graph.ask("yes", "s1", is_owner=True) == SAVED
 
 
 def test_other_sessions_are_not_paused():
@@ -345,7 +338,7 @@ def test_pause_survives_restart_with_default_sqlite_checkpointer(tmp_path):
     config = SimpleNamespace(**{**vars(_CONFIG), "CHECKPOINT_DB_FILE": str(tmp_path / "data" / "cp.db")})
     expense = FakeExpenseAgent()
     first = _build(ScriptedLLM(router=[[EXP]]), _agents(expense), None, config)
-    assert first.ask("Colruyt 900", "s1", is_owner=True) == QUESTION
+    assert first.ask("Colruyt 900", "s1") == QUESTION
     first.close()
     assert (tmp_path / "data" / "cp.db").exists()
 
@@ -354,7 +347,7 @@ def test_pause_survives_restart_with_default_sqlite_checkpointer(tmp_path):
                     _agents(expense), None, config)
     try:
         assert second.pending_interrupt("s1")["agent"] == EXP
-        assert second.ask("yes", "s1", is_owner=True) == SAVED
+        assert second.ask("yes", "s1") == SAVED
         assert second.pending_interrupt("s1") is None
     finally:
         second.close()
@@ -364,7 +357,7 @@ def test_confirm_error_replies_sorry_and_keeps_pending():
     from orchestrator.nodes.confirmation import PENDING_ERROR_REPLY
     graph, _, expense, _ = _expense_turn(confirmation=[{"verdict": "confirm", "text": "yes"}])
     expense.confirm_pending = MagicMock(side_effect=OSError("disk full"))
-    assert graph.ask("yes", "s1", is_owner=True) == PENDING_ERROR_REPLY
+    assert graph.ask("yes", "s1") == PENDING_ERROR_REPLY
     assert expense.pending == SUMMARY
     assert graph.pending_interrupt("s1") is not None
 
@@ -372,7 +365,7 @@ def test_confirm_error_replies_sorry_and_keeps_pending():
 def test_message_after_pending_cleared_elsewhere_is_a_fresh_turn():
     graph, llm, expense, conv = _expense_turn(router=[[EXP], [CONV]])
     expense.pending = None  # e.g. saved directly via the expenses tool in the meantime
-    assert graph.ask("hello", "s1", is_owner=True) == "Hello!"
+    assert graph.ask("hello", "s1") == "Hello!"
     assert llm.count("confirmation") == 0
     assert graph.pending_interrupt("s1") is None
 
@@ -381,7 +374,7 @@ def test_agent_pending_summary_error_does_not_pause():
     expense = FakeExpenseAgent()
     expense.pending_summary = MagicMock(side_effect=RuntimeError("corrupt"))
     graph = _build(ScriptedLLM(router=[[EXP]]), _agents(expense))
-    assert graph.ask("Colruyt 900", "s1", is_owner=True) == QUESTION
+    assert graph.ask("Colruyt 900", "s1") == QUESTION
     assert graph.pending_interrupt("s1") is None
 
 
@@ -426,7 +419,7 @@ class StreamingLLM(BaseChatModel):
 
 
 def _stream(llm, expense=None):
-    return _build(llm, _agents(expense or FakeExpenseAgent(propose=False))).stream_tokens("hi", "s", is_owner=True)
+    return _build(llm, _agents(expense or FakeExpenseAgent(propose=False))).stream_tokens("hi", "s")
 
 
 def test_stream_single_agent_yields_passthrough_answer():
@@ -452,8 +445,8 @@ def test_stream_pauses_and_resumes_like_ask():
     expense = FakeExpenseAgent()
     llm = StreamingLLM(router_replies=[[EXP]], confirmation_replies=[{"verdict": "confirm", "text": "yes"}])
     graph = _build(llm, _agents(expense))
-    assert "".join(graph.stream_tokens("Colruyt 900", "s", is_owner=True)) == QUESTION
-    assert "".join(graph.stream_tokens("yes", "s", is_owner=True)) == SAVED
+    assert "".join(graph.stream_tokens("Colruyt 900", "s")) == QUESTION
+    assert "".join(graph.stream_tokens("yes", "s")) == SAVED
     assert expense.pending is None
 
 
@@ -535,3 +528,76 @@ def test_sync_and_async_callers_share_one_graph():
     graph = _slow_graph(agent)
     assert graph.ask("sync", "s1") == "done: sync"
     assert asyncio.run(graph.aask("async", "s2")) == "done: async"
+
+
+# ---------------------------------------------------------------------------
+# Conversation memory and agent announcements
+# ---------------------------------------------------------------------------
+
+def test_follow_up_reaches_the_router_with_the_previous_turn():
+    store = InMemoryHistoryStore()
+    agents = _agents(FakeExpenseAgent(propose=False))
+    llm = ScriptedLLM(router=[[EXP], [EXP]])
+    graph = _build(llm, agents, history_store=store)
+    graph.ask("Aldi 10", "chat-1")
+    assert len(llm.router_messages[0]) == 2  # first turn: system + message, no history
+
+    graph.ask("yes", "chat-1")
+    history, message = llm.router_messages[1][1:]
+    assert history.content.endswith("user: Aldi 10\nexpenditure_tracker: Logged.")
+    assert message.content == "yes"
+
+
+def test_history_is_kept_per_session():
+    store = InMemoryHistoryStore()
+    llm = ScriptedLLM(router=[[CONV], [CONV]])
+    graph = _build(llm, _agents(), history_store=store)
+    graph.ask("hi", "chat-A")
+    graph.ask("hi", "chat-B")
+    assert len(llm.router_messages[1]) == 2
+    assert [m.content for m in store.get("orchestrator", "chat-A")] == ["hi", "Hello!"]
+
+
+def test_on_route_announces_each_planned_agent_before_it_runs():
+    log = []
+    agents = [AgentEntry(n, n, RecordingAgent(n, log), "anthropic", "m") for n in ("a_agent", "b_agent")]
+    graph = _build(ScriptedLLM(router=[["b_agent", "a_agent"]], synthesiser="merged"), agents)
+
+    def on_route(entry):
+        log.append(f"announce {entry.name}")
+
+    assert graph.ask("hi", "s", on_route=on_route) == "merged"
+    assert log == ["announce b_agent", "b_agent", "announce a_agent", "a_agent"]
+
+
+def test_on_route_failure_never_breaks_the_request():
+    graph = _build(ScriptedLLM(router=[[CONV]]), _agents())
+
+    def on_route(entry):
+        raise RuntimeError("client gone")
+
+    assert graph.ask("hi", "s", on_route=on_route) == "Hello!"
+
+
+class LeakyStreamingLLM(StreamingLLM):
+    """Merge LLM whose streamed answer contains a tool call written out as text."""
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        for token in ["Here ", "you <inv", 'oke name="Skill"><param', 'eter name="a">x</parameter>', "</invoke>", "go."]:
+            chunk = ChatGenerationChunk(message=AIMessageChunk(content=token))
+            if run_manager:
+                run_manager.on_llm_new_token(chunk.text, chunk=chunk)
+            yield chunk
+
+
+def test_stream_never_yields_tool_call_markup():
+    tokens = list(_stream(LeakyStreamingLLM(router_replies=[[CONV, EXP]])))
+    assert "".join(tokens) == "Here you go."
+    assert not any("<" in t for t in tokens)
+
+
+def test_merged_answer_with_only_markup_is_withheld():
+    from core.src.output_guard import WITHHELD_REPLY
+
+    llm = ScriptedLLM(router=[[CONV, EXP]], synthesiser='<invoke name="Skill"></invoke>')
+    assert _build(llm, _agents(FakeExpenseAgent(propose=False))).ask("hi", "s") == WITHHELD_REPLY
