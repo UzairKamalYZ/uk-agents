@@ -91,5 +91,39 @@ class TestSseFormatter(unittest.TestCase):
         self.assertIn("chunk with spaces  ", result[0])
 
 
+class TestAskEndpoint(unittest.TestCase):
+    """/ask runs the blocking agent off the event loop and keeps sessions apart."""
+
+    def setUp(self):
+        self.agent = MagicMock()
+        self.agent.ask.return_value = "answer"
+
+    def _ask(self, prompt="hi", stream=False, session_id=None):
+        from clients.rest.main import _ask
+        return asyncio.run(_ask(self.agent, prompt, stream, session_id))
+
+    def test_should_pass_given_session_id_and_return_it(self):
+        self.assertEqual(self._ask(session_id="abc"), {"response": "answer", "session_id": "abc"})
+        self.agent.ask.assert_called_once_with("hi", stream=False, session_id="abc")
+
+    def test_should_use_a_fresh_session_per_request_when_none_given(self):
+        first, second = self._ask()["session_id"], self._ask()["session_id"]
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first, "default")
+
+    def test_should_not_run_agent_on_event_loop_thread(self):
+        import threading
+        threads = []
+        self.agent.ask.side_effect = lambda *a, **k: threads.append(threading.current_thread()) or "x"
+        self._ask()
+        self.assertIsNot(threads[0], threading.main_thread())
+
+    @patch("clients.rest.main.StreamingResponse")
+    def test_should_stream_with_session_header(self, MockResponse):
+        self._ask(stream=True, session_id="s")
+        self.agent.ask.assert_called_once_with("hi", stream=True, session_id="s")
+        self.assertEqual(MockResponse.call_args.kwargs["headers"], {"X-Session-Id": "s"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,6 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..state import GraphState
-from ..tracing import record_route
 from ._json import parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -36,8 +35,9 @@ class SupervisorNode:
     Parameters
     ----------
     llm             : chat model used to produce the routing decision
-    prompt_template : text loaded from SUPERVISOR_PROMPT_FILE — must contain
-                      {user_input} and {agent_outputs} placeholders
+    prompt_template : text loaded from SUPERVISOR_PROMPT_FILE, with the {agents}
+                      list already filled in; the question and agent outputs
+                      are sent separately as the human message
     """
 
     def __init__(self, llm: BaseChatModel, prompt_template: str, agent_names: set[str] = None) -> None:
@@ -58,37 +58,27 @@ class SupervisorNode:
             or "None yet."
         )
 
-        prompt = (
-            self._prompt_template
-            .replace("{history}", state.get("history") or "None")
-            .replace("{user_input}", state["user_input"])
-            .replace("{agent_outputs}", agent_outputs_text)
-        )
-
+        # User text and agent outputs stay out of the system prompt, so nothing in
+        # them can pose as routing rules (prompt injection).
         messages = [
-            SystemMessage(content=prompt),
-            HumanMessage(content="Which agent should run next, or should we FINISH?"),
+            SystemMessage(content=self._prompt_template),
+            HumanMessage(content=(
+                f"<user_question>\n{state['user_input']}\n</user_question>\n\n"
+                f"<agent_outputs>\n{agent_outputs_text}\n</agent_outputs>\n\n"
+                "Which agent should run next, or should we FINISH?"
+            )),
         ]
         raw = self._llm.invoke(messages)
         content = raw.text
 
         next_agent = self._parse_next(content)
-        logger.info("[supervisor] request=%s turns=%d → next=%s",
-                    state.get("request_id"), state.get("turns", 0), next_agent)
-        if next_agent in self._agent_names:
-            record_route("supervisor", next_agent, self._parse_reason(content), state.get("request_id"))
+        logger.info("[supervisor] turns=%d → next=%s", state.get("turns", 0), next_agent)
 
         return {"next": next_agent}
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_reason(text: str) -> str:
-        """The optional "reason" the supervisor gives for its choice ("" if absent)."""
-        data = parse_json_object(text, "next")
-        return str(data.get("reason") or "") if data is not None else ""
 
     def _parse_next(self, text: str) -> str:
         """

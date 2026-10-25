@@ -53,13 +53,13 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
+from typing import Any
 
+from langchain_core.messages import AIMessageChunk
 from langgraph.graph import END, START, StateGraph
 
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
-from core.src.model.session_manager import SessionManager
 from core.src.utils import load_prompt
 
 # Register LangSmith env vars so traces from the orchestrator appear in the
@@ -70,11 +70,9 @@ os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
 if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
-from .agent_registry import AgentEntry, load_agents
-from .conversation import ConversationMemory
+from .agent_registry import load_agents
 from .nodes import AgentNode, NormaliserNode, SupervisorNode, SynthesiserNode
 from .state import MAX_AGENT_TURNS, GraphState
-from .tracing import new_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -185,10 +183,7 @@ class MultiAgentGraph:
     6. Compile the graph.
     """
 
-    def __init__(self, history_store: SessionManager | None = None) -> None:
-
-        # Recent turns per session, so follow-ups ("yes", "do that too") keep their context
-        self._memory = ConversationMemory(history_store or SessionManager(Config.SESSION_DB_FILE))
+    def __init__(self) -> None:
 
         # -----------------------------------------------------------------
         # 1. Shared LLM — same model drives normaliser, supervisor and synthesiser
@@ -201,7 +196,6 @@ class MultiAgentGraph:
         # -----------------------------------------------------------------
         agents = load_agents()
         agent_names = {a.name for a in agents}   # used by router + route_map
-        self._entries = {a.name: a for a in agents}   # name → registry entry (labels, remarks)
 
         # -----------------------------------------------------------------
         # 3. Build the agent description block injected into the supervisor
@@ -272,12 +266,10 @@ class MultiAgentGraph:
     # Public interface
     # ------------------------------------------------------------------
 
-    def _initial_state(self, user_input: str, session_id: str, is_owner: bool) -> GraphState:
-        """Fresh state for one user turn: a new request_id, the session's recent conversation,
-        everything else empty and turns at zero."""
+    @staticmethod
+    def _initial_state(user_input: str, session_id: str, is_owner: bool) -> GraphState:
+        """Fresh state for one user turn: everything empty, turns at zero."""
         return {
-            "request_id": new_request_id(),
-            "history": self._memory.recent(session_id),
             "user_input": user_input,
             "session_id": session_id,
             "messages": [],
@@ -297,26 +289,7 @@ class MultiAgentGraph:
         node execution.  Used internally by ask() to collect the final state.
         """
         initial_state = self._initial_state(user_input, session_id, is_owner)
-        yield from self._graph.stream(
-            initial_state, stream_mode="updates", config=self._run_config(initial_state)
-        )
-
-    @staticmethod
-    def _run_config(state: GraphState) -> dict[str, Any]:
-        """LangSmith run name, tags and metadata for one turn — every node run inherits them."""
-        return {
-            "run_name": "orchestrator.graph",
-            "tags": ["orchestrator", f"session:{state['session_id']}"],
-            "metadata": {
-                "request_id": state["request_id"],
-                "session_id": state["session_id"],
-                "is_owner": state["is_owner"],
-            },
-        }
-
-    def agent_entry(self, name: str) -> AgentEntry | None:
-        """The registry entry for an agent name (display name, remarks…), or None."""
-        return self._entries.get(name)
+        yield from self._graph.stream(initial_state, stream_mode="updates")
 
     def stream_tokens(self, user_input: str, session_id: str = "default", *, is_owner: bool = False):
         """
@@ -324,45 +297,36 @@ class MultiAgentGraph:
         """
         initial_state = self._initial_state(user_input, session_id, is_owner)
 
-        # stream_mode="messages" yields (AIMessageChunk, metadata) tuples.
-        # metadata["langgraph_node"] tells us which graph node produced the chunk.
-        for chunk, metadata in self._graph.invoke(
-            initial_state, stream_mode="messages", config=self._run_config(initial_state)
+        # stream_mode="messages" yields (message, metadata) tuples as they happen:
+        # AIMessageChunk tokens while the synthesiser LLM writes, plus the complete
+        # AIMessage each node returns.  metadata["langgraph_node"] names the node.
+        streamed = False
+        for chunk, metadata in self._graph.stream(
+            initial_state, stream_mode="messages"
         ):
-            if metadata.get("langgraph_node") == "synthesiser":
-                # .text skips thinking / tool-call blocks (empty for those chunks)
-                if chunk.text:
-                    yield chunk.text
+            if metadata.get("langgraph_node") != "synthesiser":
+                continue
+            # The final message repeats the streamed tokens — only use it when
+            # nothing was streamed (single-agent passthrough makes no LLM call).
+            if isinstance(chunk, AIMessageChunk):
+                streamed = True
+            elif streamed:
+                continue
+            # .text skips thinking / tool-call blocks (empty for those chunks)
+            if chunk.text:
+                yield chunk.text
 
-    def ask(
-        self,
-        user_input: str,
-        session_id: str = "default",
-        *,
-        is_owner: bool = False,
-        on_route: Callable[[AgentEntry], None] | None = None,
-    ) -> str:
+    def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
         """
         Blocking call — runs the full pipeline and returns the synthesiser's answer.
 
         Internally calls stream() and collects all events.  The synthesiser
         stores its answer in agent_outputs["synthesiser"], which this method
         extracts and returns as a plain string.
-
-        on_route, if given, is called with the AgentEntry of each agent as soon
-        as it is picked — before that agent runs — so a client can tell the user
-        who is working on their query.  Exceptions from on_route are logged and
-        never interrupt the request.
         """
         final_state: dict[str, Any] = {}
-        announced: set[str] = set()
         for event in self.stream(user_input, session_id=session_id, is_owner=is_owner):
             final_state.update(event)   # accumulate all node updates
-            if on_route is not None:
-                for name in self._routed_agents(event):
-                    if name not in announced:
-                        announced.add(name)
-                        self._notify(on_route, name)
 
         # Pull agent_outputs out of each node's update dict and merge them
         outputs = {}
@@ -373,25 +337,4 @@ class MultiAgentGraph:
         answer = outputs.get("synthesiser", "")
         if not answer:
             logger.warning("[MultiAgentGraph] no synthesiser output in final state")
-        self._memory.record(session_id, user_input, answer, [n for n in outputs if n != "synthesiser"])
         return answer
-
-    def _routed_agents(self, event: dict[str, Any]) -> list[str]:
-        """Agents picked by this update event: the supervisor's or normaliser's "next",
-        or the agent whose pending item the normaliser just resolved."""
-        names = []
-        for node in ("normaliser", "supervisor"):
-            update = event.get(node)
-            if not isinstance(update, dict):
-                continue
-            nxt = update.get("next")
-            if nxt in self._entries:
-                names.append(nxt)
-            names.extend(n for n in update.get("agent_outputs", {}) if n in self._entries)
-        return names
-
-    def _notify(self, on_route: Callable[[AgentEntry], None], name: str) -> None:
-        try:
-            on_route(self._entries[name])
-        except Exception:
-            logger.exception("[MultiAgentGraph] on_route callback failed for %s", name)

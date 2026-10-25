@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from .config.config import Config
 from .model.llm_factory import create_llm
 from .model.llm_model_graph import LlmModelGraph
-from .model.session_manager import SessionManager
+from .model.session_manager import shared_session_store
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class BaseAgent(ABC):
             tools=mcp_tools,
             agent_name=self.__class__.__name__,
             rag_enabled=self._rag_enabled,
-            history_store=SessionManager(Config.SESSION_DB_FILE),
+            history_store=shared_session_store(Config.SESSION_DB_FILE),
         )
         logger.debug("%s initialised (session=%s)", self.__class__.__name__, self.session_id)
 

@@ -17,6 +17,8 @@ by appending an entry — no code changes required:
 server is launched from the project root so ``-m package.module`` resolves.
 ``"owner_only": true`` keeps a server out of the default tool set
 (``langchain_tools()`` with no ``server_name``); request it by name instead.
+``"timeout": <seconds>`` overrides how long a stdio server may take to answer
+one call (default 60) before it is killed and restarted on the next call.
 
 The registry is built automatically at import time from that file.
 """
@@ -28,7 +30,7 @@ import sys
 from pathlib import Path
 
 from ..config.config import Config
-from .mcp_registry import MCPRegistry
+from .mcp_registry import DEFAULT_TIMEOUT, MCPRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,8 @@ def _load_registry(config_path: Path) -> MCPRegistry:
             cwd = str(_PROJECT_ROOT) if "{python}" in command else None
             command = [sys.executable if part == "{python}" else part for part in command]
             logger.info("mcp-tools: adding stdio server '%s'", name)
-            registry.register(name, command, cwd=cwd, owner_only=owner_only)
+            timeout = float(entry.get("timeout", DEFAULT_TIMEOUT))
+            registry.register(name, command, cwd=cwd, owner_only=owner_only, timeout=timeout)
 
         elif name and url:
             # Build query params: resolve any api_key_env reference from environment

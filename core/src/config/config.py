@@ -33,14 +33,13 @@ class Config:
     ANTHROPIC_API = os.getenv("ANTHROPIC_API", "true").lower() == "true"
     SENTENCE_TRANSFORMER_MODEL = os.getenv("SENTENCE_TRANSFORMER_MODEL")
     MEMORY_FILE = os.getenv("MEMORY_FILE")
-    URLS_FILE = str(_PROJECT_ROOT / (os.getenv("URLS_FILE") or "agents/property/urls.txt"))
+    URLS_FILE = os.getenv("URLS_FILE")
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-    # Property agent prompt files — defaults point at agents/property/prompts/, resolved from the project root
-    PROMPT_FILE = str(_PROJECT_ROOT / (os.getenv("PROMPT_FILE") or "agents/property/prompts/System_Prompt.txt"))
-    INTERACTION_FILE = str(_PROJECT_ROOT / (os.getenv("INTERACTION_FILE") or "agents/property/prompts/interaction.json"))
-    REFORMULATION_PROMPT = str(_PROJECT_ROOT / (os.getenv("REFORMULATION_PROMPT") or "agents/property/prompts/reformulated_prompt.txt"))
+    PROMPT_FILE = os.path.join(os.getenv("PROMPT_FILE"))
+    INTERACTION_FILE = os.path.join(os.getenv("INTERACTION_FILE"))
+    REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     # Telegram user id of the owner; only they can use the expense tracker
@@ -51,10 +50,8 @@ class Config:
     # API security — leave empty to disable auth
     API_KEY = os.getenv("API_KEY", "")
 
-    # SQLite file for persistent session history
-    SESSION_DB_FILE = str(_PROJECT_ROOT / (os.getenv("SESSION_DB_FILE") or "sessions.db"))
-    # Prompt the scheduled cron client sends on every run
-    CRON_SEARCH_PROMPT = os.getenv("CRON_SEARCH_PROMPT", "Find 2-bedroom apartments in Poland under 1000")
+    # SQLite file for persistent session history (relative → from the project root)
+    SESSION_DB_FILE = str(_PROJECT_ROOT / os.getenv("SESSION_DB_FILE", "sessions.db"))
     # Selenium scraping browser connection string
     SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")
     # Number of listings to retrieve per RAG search
@@ -69,13 +66,6 @@ class Config:
     # Expense ledger + input log — kept outside the project in the user data dir;
     # a relative EXPENSES_DIR is resolved from the project root, "~" is expanded
     EXPENSES_DIR = str(_PROJECT_ROOT / Path(os.getenv("EXPENSES_DIR") or _user_data_dir() / "expenses").expanduser())
-    # FBR (Pakistan) tax filing — the project holding the fbr-iris-filing skill and its snapshots/;
-    # a relative path is resolved from the project root, "~" is expanded
-    FBR_TAX_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DIR") or "~/work/fbr-tax-filing").expanduser())
-    # The FBR agent's own records (filings.db: each tax year's submitted/draft status)
-    FBR_TAX_DATA_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DATA_DIR") or _user_data_dir() / "fbr_tax").expanduser())
-    # Tool calls one filing step may take (reading a whole return is many browser actions)
-    FBR_TAX_MAX_TURNS = int(os.getenv("FBR_TAX_MAX_TURNS", "200"))
     # Local faster-whisper model size for voice transcription
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))

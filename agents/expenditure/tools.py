@@ -69,9 +69,10 @@ def add_expense(place: str, amount: float, date: str | None = None,
     if isinstance(parsed_amount, str):
         return parsed_amount
     led = _ledger(ledger)
-    expense = led.add(parsed_date, place, parsed_amount)
-    led.clear_pending()
-    prev, cur = led.totals(_today())
+    with led.locked():
+        expense = led.add(parsed_date, place, parsed_amount)
+        led.clear_pending()
+        prev, cur = led.totals(_today())
     return format_logged(expense, prev, cur)
 
 
@@ -100,10 +101,11 @@ def propose_expense(place: str, problem: str, amount: float | None = None, date:
 def undo_last_expense(*, ledger: ExpenseLedger | None = None) -> str:
     """Remove the most recently saved expense."""
     led = _ledger(ledger)
-    expense = led.undo_last()
-    if expense is None:
-        return format_nothing("undo")
-    prev, cur = led.totals(_today())
+    with led.locked():
+        expense = led.undo_last()
+        if expense is None:
+            return format_nothing("undo")
+        prev, cur = led.totals(_today())
     return format_undone(expense, prev, cur)
 
 

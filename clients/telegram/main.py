@@ -6,7 +6,6 @@ import functools
 import logging
 import random
 import tempfile
-import time
 from pathlib import Path
 
 from telegram import Update
@@ -17,8 +16,15 @@ from core.src.config.config import Config
 from core.src.speech.transcriber import Transcriber
 from clients.base import BaseClient
 
-ROUTING_TEXT = "🔀 Finding the right agent for your query…"
-WORKING_TEXT = "🤖 {agent} is working on your query…"
+WAITING_JOKES = [
+    "Why did the scarecrow win an award? Because he was outstanding in his field — much like your future home!",
+    "Why do real estate agents make great comedians? Because they always know how to close!",
+    "What do you call a haunted property? A buy-one-get-one-scare deal.",
+    "Why did the house go to therapy? It had too many issues with its foundation.",
+    "What did the ocean say to the beach house? Nothing, it just waved.",
+    "Why don't houses ever get lonely? Because they're always in a good neighbourhood.",
+    "What's a real estate agent's favourite type of music? House!",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -30,83 +36,98 @@ class _Bot:
         self.transcriber = Transcriber()
         self.app = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).build()
         self.app.add_handler(CommandHandler("start", self._handle_start))
+        self.app.add_handler(CommandHandler("whoami", self._handle_whoami))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
         self.app.add_handler(MessageHandler(filters.VOICE, self._handle_voice))
 
     @staticmethod
-    def _is_owner(user_id: int) -> bool:
-        return bool(Config.TELEGRAM_OWNER_ID) and str(user_id) == Config.TELEGRAM_OWNER_ID
+    def _owner_ids() -> set[str]:
+        """TELEGRAM_OWNER_ID as a set: comma/space separated ids or @usernames, quotes ignored."""
+        raw = (Config.TELEGRAM_OWNER_ID or "").replace(",", " ")
+        return {part.strip("'\"").lstrip("@").lower() for part in raw.split() if part.strip("'\"@")}
+
+    @staticmethod
+    def _sender_keys(update: Update) -> set[str]:
+        """Ids and usernames that identify who sent this update — the user, or the
+        channel/group they posted as (channel posts and anonymous admins have no user)."""
+        keys = set()
+        for sender in (update.effective_user, update.effective_sender):
+            if sender is None:
+                continue
+            keys.add(str(sender.id))
+            if getattr(sender, "username", None):
+                keys.add(sender.username.lower())
+        return keys
+
+    def _is_owner(self, update: Update) -> bool:
+        return bool(self._owner_ids() & self._sender_keys(update))
 
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "Hello! I'm your personal assistant. Send me a message or a voice note."
         )
 
+    async def _handle_whoami(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Shows the ids to put in TELEGRAM_OWNER_ID."""
+        keys = ", ".join(sorted(self._sender_keys(update))) or "unknown"
+        status = "✅ recognised as the owner" if self._is_owner(update) else "❌ not the owner"
+        await update.effective_message.reply_text(
+            f"Your Telegram ids: {keys}\nThis chat: {update.effective_chat.id}\n{status}\n\n"
+            "Put one of your ids in TELEGRAM_OWNER_ID in .env and restart the bot."
+        )
+
     async def _answer(self, update: Update, text: str, header: str = "") -> None:
-        sent = await update.message.reply_text(f"{header}{ROUTING_TEXT}")
+        joke = random.choice(WAITING_JOKES)
+        sent = await update.effective_message.reply_text(
+            f"{header}Thinking...\n\n💡 While you wait: {joke}"
+        )
 
         session_id = str(update.effective_chat.id)
-        is_owner = self._is_owner(update.effective_user.id)
-        loop = asyncio.get_running_loop()
-
-        def on_route(entry) -> None:
-            # Runs on the executor thread as soon as the orchestrator picks an agent —
-            # hop back onto the event loop to edit the placeholder, and wait so this
-            # edit always lands before the final answer.
-            status = self._working_text(entry)
-            asyncio.run_coroutine_threadsafe(sent.edit_text(f"{header}{status}"), loop).result(timeout=10)
+        is_owner = self._is_owner(update)
+        logger.info("chat=%s sender=%s owner=%s", session_id, sorted(self._sender_keys(update)), is_owner)
 
         try:
             fn = functools.partial(
-                self.local_agent.ask, text, stream=False, session_id=session_id,
-                is_owner=is_owner, on_route=on_route,
+                self.local_agent.ask, text, stream=False, session_id=session_id, is_owner=is_owner
             )
-            started = time.monotonic()
-            response = await loop.run_in_executor(None, fn)
-            logger.info("Answered chat %s in %.1fs (%d chars)", session_id, time.monotonic() - started, len(response or ""))
+            response = await asyncio.get_running_loop().run_in_executor(None, fn)
             await sent.edit_text(f"{header}{response or 'No response generated.'}")
 
-        except Exception:
-            logger.exception("Error answering chat %s", session_id)
+        except Exception as e:
+            logger.error(f"Error from LocalAgent: {e}")
             await sent.edit_text("Sorry, something went wrong. Please try again.")
 
-    @staticmethod
-    def _working_text(entry) -> str:
-        status = WORKING_TEXT.format(agent=entry.label)
-        if entry.remarks:
-            status += f"\n\n😄 {random.choice(entry.remarks)}"
-        return status
-
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_text = update.message.text
-        logger.info(f"Received message from {update.effective_user.id}: {user_text}")
+        user_text = update.effective_message.text
+        logger.info("Received message in chat %s: %s", update.effective_chat.id, user_text)
         await self._answer(update, user_text)
 
     async def _handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logger.info(f"Received voice note from {update.effective_user.id}")
+        logger.info("Received voice note in chat %s", update.effective_chat.id)
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "voice.ogg"
-                tg_file = await context.bot.get_file(update.message.voice.file_id)
+                tg_file = await context.bot.get_file(update.effective_message.voice.file_id)
                 await tg_file.download_to_drive(path)
                 transcript = await asyncio.get_running_loop().run_in_executor(
                     None, self.transcriber.transcribe, path
                 )
-        except Exception:
-            logger.exception("Voice transcription failed")
-            await update.message.reply_text(
+        except Exception as e:
+            logger.error(f"Voice transcription failed: {e}")
+            await update.effective_message.reply_text(
                 "Sorry, I couldn't transcribe that voice note. Please try again or type it."
             )
             return
 
-        logger.info("Transcribed voice note from %s: %r", update.effective_user.id, transcript)
         if not transcript:
-            await update.message.reply_text("🎤 I couldn't hear anything — please try again or type it.")
+            await update.effective_message.reply_text("🎤 I couldn't hear anything — please try again or type it.")
             return
 
         await self._answer(update, transcript, header=f"🎤 You said: {transcript}\n\n")
 
     def run(self):
+        if not self._owner_ids():
+            logger.warning("TELEGRAM_OWNER_ID is empty — owner-only agents will refuse everyone. Send /whoami to the bot to get your id.")
         self.transcriber.load()  # load Whisper once at startup, not on the first voice note
         self.app.run_polling()
 

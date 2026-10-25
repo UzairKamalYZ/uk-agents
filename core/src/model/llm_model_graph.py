@@ -17,7 +17,7 @@ from ..utils import load_prompt
 from .embedder import Embedder
 from .mcp_tools import close_mcp, _mcp
 from .rag_context_manager import RagContextManager
-from .session_manager import SessionManager
+from .session_manager import HistoryStore, InMemoryHistoryStore
 
 os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
 os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
@@ -48,16 +48,15 @@ class LlmModelGraph:
         tools: list | None = None,
         agent_name: str = "agent",
         rag_enabled: bool = False,
-        history_store: SessionManager | None = None,
+        history_store: HistoryStore | None = None,
     ):
         self.agent_name = agent_name
         self._rag_enabled = rag_enabled
         self.system_prompt = system_prompt or load_prompt(Config.PROMPT_FILE)
 
         self.rag_context_manager = rag_context_manager or RagContextManager(Embedder())
-        # Persistent store when given (BaseAgent passes one); otherwise history lives in memory.
-        self._history_store = history_store
-        self._histories: dict[str, list] = {}
+        # Thread-safe; BaseAgent passes the shared SQLite store so history survives restarts
+        self._history = history_store or InMemoryHistoryStore()
 
         # Use caller-supplied tools when provided; fall back to the full MCP registry.
         # Pass an explicit empty list to disable all tool use for an agent.
@@ -88,7 +87,10 @@ class LlmModelGraph:
             result = self.graph.invoke(state)
             logger.info("[%s] graph.invoke → done", self.agent_name)
             answer = result["answer"]
-            self._save_turn(session_id, [HumanMessage(content=query), AIMessage(content=answer)])
+            self._history.append(self.agent_name, session_id, [
+                HumanMessage(content=query),
+                AIMessage(content=answer),
+            ])
             return answer
 
         return _run(user_query)
@@ -235,24 +237,7 @@ class LlmModelGraph:
         return f"Tool '{name}' not found."
 
     def _get_history(self, session_id: str) -> list:
-        max_messages = int(Config.MAX_HISTORY_TURNS) * 2
-        if self._history_store is not None:
-            try:
-                return self._history_store.load(self.agent_name, session_id, max_messages)
-            except Exception:  # a broken history must not stop the agent answering
-                logger.exception("[%s] could not load chat history (session=%s)", self.agent_name, session_id)
-                return []
-        history = self._histories.setdefault(session_id, [])
-        return history[-max_messages:] if len(history) > max_messages else history
-
-    def _save_turn(self, session_id: str, messages: list) -> None:
-        if self._history_store is not None:
-            try:
-                self._history_store.append(self.agent_name, session_id, messages)
-            except Exception:
-                logger.exception("[%s] could not save chat history (session=%s)", self.agent_name, session_id)
-            return
-        self._histories[session_id] = self._get_history(session_id) + messages
+        return self._history.get(self.agent_name, session_id, limit=int(Config.MAX_HISTORY_TURNS) * 2)
 
     def _initial_state(self, user_query: str, history: list = None) -> State:
         return {
