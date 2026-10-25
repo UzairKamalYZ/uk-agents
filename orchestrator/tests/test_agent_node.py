@@ -51,7 +51,7 @@ def test_graph_initial_state_carries_owner_flag():
     st = MultiAgentGraph._initial_state("hello", "s", True)
     assert st["is_owner"] is True
     assert st["raw_input"] == "hello"
-    assert st["direct"] is False
+    assert st["plan"] == []
     assert st["turns"] == 0
 
 

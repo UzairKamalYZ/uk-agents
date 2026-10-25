@@ -66,9 +66,8 @@ class Config:
     RAG_K = int(os.getenv("RAG_K", "5"))
     MAX_HISTORY_TURNS= os.getenv("MAX_HISTORY_TURNS", 10)
     # Orchestrator prompt files
-    SUPERVISOR_PROMPT_FILE = _project_path("SUPERVISOR_PROMPT_FILE", "orchestrator/prompts/supervisor.txt")
+    ROUTER_PROMPT_FILE = _project_path("ROUTER_PROMPT_FILE", "orchestrator/prompts/router.txt")
     SYNTHESISER_PROMPT_FILE = _project_path("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
-    NORMALISER_PROMPT_FILE = _project_path("NORMALISER_PROMPT_FILE", "orchestrator/prompts/normaliser.txt")
     CONFIRMATION_PROMPT_FILE = _project_path("CONFIRMATION_PROMPT_FILE", "orchestrator/prompts/confirmation.txt")
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))

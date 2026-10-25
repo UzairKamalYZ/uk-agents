@@ -9,17 +9,16 @@ those changes back automatically before the next node runs.
 
 TURN LIFECYCLE
 --------------
-Each time the supervisor routes to an agent, that agent increments `turns` by 1.
-When `turns` reaches MAX_AGENT_TURNS the router ignores the supervisor's decision
-and forces the flow straight to the synthesiser, preventing infinite loops.
+The router writes the turn's `plan` (ordered agent names).  After the router
+and after each agent, graph._route_plan sends the flow to the first planned
+agent that has not answered yet, or to the synthesiser when none is left.
+Every agent node increments `turns`; at MAX_AGENT_TURNS the flow goes
+straight to the synthesiser whatever the plan says.
 
   User input
       │
       ▼
-  supervisor ──► agent_node (turns += 1) ──► supervisor ...
-      │                                           │
-      │          (turns >= MAX_AGENT_TURNS)       │
-      └──────────────── synthesiser ◄─────────────┘
+  router ──► agent A (turns += 1) ──► agent B ... ──► synthesiser
 """
 from __future__ import annotations
 
@@ -30,7 +29,6 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 # Hard cap on how many agent calls a single user turn may trigger.
-# Prevents runaway loops if the supervisor keeps re-routing to agents.
 MAX_AGENT_TURNS = 6
 
 
@@ -43,9 +41,9 @@ class GraphState(TypedDict):
     Fields
     ------
     user_input : str
-        The user's question as the supervisor and agents see it.  Set to the
-        raw message at graph entry, then replaced by the normaliser's cleaned
-        text (or, on a pending correction, the text plus the pending summary).
+        The user's question as the agents see it.  Set to the raw message at
+        graph entry, then replaced by the router's cleaned text (or, on a
+        pending correction, the text plus the pending summary).
 
     session_id : str
         Identifies the conversation so per-agent session history is kept
@@ -57,19 +55,21 @@ class GraphState(TypedDict):
         overwriting each other.
 
     agent_outputs : dict[str, str]
-        Maps agent name → its latest response text.
-        The supervisor reads this dict to decide what to do next.
-        The synthesiser reads it to build the final answer.
+        Maps agent name → its response text this turn.  An agent with an
+        entry here has run; the synthesiser merges them into the answer.
+
+    plan : list[str]
+        Agents to run this turn, in order — written by the router (or by the
+        confirmation node for a correction: just that agent).
 
     next : str
-        Routing token written by the supervisor node after each decision.
-        Values: any agent name registered in agents.json, or "FINISH".
-        The conditional edge in graph.py reads this to pick the next node.
+        Where the confirmation node sends the flow after a resume: an agent
+        name, "synthesiser", "router" or END.
 
     turns : int
         Running count of agent-node invocations this turn.
-        Incremented by every agent node.  Checked by the router to enforce
-        the MAX_AGENT_TURNS cap.
+        Incremented by every agent node; at MAX_AGENT_TURNS the plan is cut
+        short and the synthesiser answers.
 
     is_owner : bool
         True when the caller is the bot's owner.  Agents flagged
@@ -77,10 +77,6 @@ class GraphState(TypedDict):
 
     raw_input : str
         The user's message exactly as received, before any normalisation.
-
-    direct : bool
-        True when a pre-supervisor step has already decided the routing
-        (bypassing the supervisor LLM).  False at graph entry.
 
     awaiting : str | None
         Name of an agent that left a pending item needing the user's yes/no
@@ -93,9 +89,9 @@ class GraphState(TypedDict):
     session_id: str
     messages: Annotated[list[AnyMessage], add_messages]
     agent_outputs: dict[str, str]
+    plan: list[str]
     next: str
     turns: int
     is_owner: bool
     raw_input: str
-    direct: bool
     awaiting: str | None

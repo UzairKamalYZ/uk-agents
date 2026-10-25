@@ -20,8 +20,8 @@ Outcomes (state["next"] picks the following node)
 --------
     confirm            → agent.confirm_pending() output        → synthesiser
     cancel             → agent.discard_pending(), "Discarded." → synthesiser
-    correction         → cleaned reply + summary, direct       → that agent
-    unrelated          → agent.discard_pending(), fresh turn   → normaliser
+    correction         → cleaned reply + summary, plan=[agent] → that agent
+    unrelated          → agent.discard_pending(), fresh turn   → router
     LLM error/refusal  → re-ask, pending kept                  → synthesiser
     confirm/discard raises → PENDING_ERROR_REPLY               → synthesiser
 
@@ -109,7 +109,7 @@ class ConfirmationNode:
         reply: str = interrupt({"agent": name, "summary": summary, "owner_only": entry.owner_only})
 
         # ---- resumed with the user's next message ----
-        fresh_turn = {"raw_input": reply, "user_input": reply, "agent_outputs": {}, "turns": 0, "direct": False}
+        fresh_turn = {"raw_input": reply, "user_input": reply, "agent_outputs": {}, "turns": 0, "plan": []}
         classified = await self._classify(reply, summary)
         if classified is None:
             return {**fresh_turn, "agent_outputs": {name: REASK_REPLY.format(summary=summary)},
@@ -121,7 +121,7 @@ class ConfirmationNode:
 
         if verdict == "correction":
             return {**fresh_turn, "user_input": f"{text}\n\n(Correction to the pending expense: {summary})",
-                    "direct": True, "awaiting": None, "next": name}
+                    "plan": [name], "awaiting": None, "next": name}
 
         try:
             if verdict == "confirm":
@@ -138,7 +138,7 @@ class ConfirmationNode:
             return {**fresh_turn, "agent_outputs": {name: DISCARDED_REPLY}, "awaiting": None,
                     "next": "synthesiser"}
         # "unrelated" — the user moved on: handle the message as a brand-new turn
-        return {**fresh_turn, "awaiting": None, "next": "normaliser"}
+        return {**fresh_turn, "awaiting": None, "next": "router"}
 
     # ------------------------------------------------------------------
     # Internal helpers
