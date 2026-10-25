@@ -51,7 +51,7 @@ def test_config_default_whisper_model_is_small():
     # Subprocess: other tests stub Config process-wide, so check the real default in isolation.
     # dotenv is neutralised so a developer .env cannot leak WHISPER_MODEL into the child.
     env = {k: v for k, v in os.environ.items() if k != "WHISPER_MODEL"}
-    env.update(PROMPT_FILE="p", INTERACTION_FILE="i", REFORMULATION_PROMPT="r")
+    env.update(PROMPT_FILE="p")
     code = (
         "import dotenv; dotenv.load_dotenv = lambda *a, **k: None; "
         "from core.src.config.config import Config; print(Config.WHISPER_MODEL)"

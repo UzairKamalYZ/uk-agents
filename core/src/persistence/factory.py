@@ -9,7 +9,6 @@ def create_vector_store(store_type: str, dim: int, config: dict):
             index_name=config.get("index_name", Config.PINECONE_INDEX_NAME),
             dim=dim,
             api_key=Config.PINECONE_API_KEY,
-            env=Config.PINECONE_ENVIRONMENT
         )
     else:
         raise ValueError(f"Unknown vector store profile: {store_type}")

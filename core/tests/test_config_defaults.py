@@ -6,7 +6,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).parents[2]
 
-_KEYS = ("PROMPT_FILE", "INTERACTION_FILE", "REFORMULATION_PROMPT", "URLS_FILE",
+_KEYS = ("PROMPT_FILE", "URLS_FILE", "HOUSING_DATASET_DIR",
          "SESSION_DB_FILE", "CRON_SEARCH_PROMPT")
 
 
@@ -23,7 +23,7 @@ def test_config_imports_with_working_defaults_when_unset():
     cfg = json.loads(out.strip().splitlines()[-1])
     assert cfg["PROMPT_FILE"] == str(_ROOT / "agents/property/prompts/System_Prompt.txt")
     assert Path(cfg["PROMPT_FILE"]).exists()
-    assert Path(cfg["INTERACTION_FILE"]).exists()
-    assert Path(cfg["REFORMULATION_PROMPT"]).exists()
+    assert Path(cfg["URLS_FILE"]).exists()
+    assert cfg["HOUSING_DATASET_DIR"] == str(_ROOT / "agents/property/datasets/pl-housing")
     assert cfg["SESSION_DB_FILE"] == str(_ROOT / "sessions.db")
     assert cfg["CRON_SEARCH_PROMPT"]

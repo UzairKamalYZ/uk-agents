@@ -1,8 +1,0 @@
-{
-  "welcome_message": "🤖 Welcome to your personal property agent! 🤖",
-  "welcome_prompt": "I can help you find properties based on your criteria. Let's get started!",
-  "input_prompt": "\nEnter your property requirements (e.g., 'a 3-bedroom house in London with a garden'): ",
-  "thinking_message": "[bold green]Finding the best properties for you...[/bold green]",
-  "goodbye_message": "\n👋 Goodbye! It was a pleasure assisting you.",
-  "session_ended_message": "\n🤖 Agent session ended."
-}

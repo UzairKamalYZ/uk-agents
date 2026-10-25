@@ -10,7 +10,7 @@ Test locations (see `testpaths` in `pyproject.toml`):
 - `core/tests/` — BaseAgent, LlmModelGraph, MCP registry, Claude Code backend, history store, embedder, transcriber, output guard, config defaults
 - `orchestrator/tests/` — graph routing, router, confirmations (interrupt/resume), conversation memory, agent nodes, registry, facade
 - `clients/tests/` — REST, Telegram, cron, Streamlit and BaseClient
-- `agents/<name>/tests/` — per-agent tests (expenditure ledger / tools / agent, FBR agent and tracker, property tools, conversational catalog, WhatsApp client)
+- `agents/<name>/tests/` — per-agent tests (expenditure ledger / tools / agent, FBR agent and tracker, property tools and ingestion, conversational catalog, WhatsApp client)
 
 Report:
 1. How many tests passed, failed and were skipped

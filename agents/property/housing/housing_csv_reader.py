@@ -1,8 +1,9 @@
 from pathlib import Path
 import pandas as pd
 
+from core.src.config.config import Config
 
-DATASET_DIR = Path("dataset")
+DATASET_DIR = Path(Config.HOUSING_DATASET_DIR)
 CHUNK_SIZE = 50_000
 
 

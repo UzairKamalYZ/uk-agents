@@ -32,11 +32,18 @@ JOKES = [
 
 
 def _get_agent_response(user_query: str) -> str:
+    # Send back the session id the API returned, so the chat is one conversation
+    params = {"prompt": user_query}
+    if st.session_state.get("session_id"):
+        params["session_id"] = st.session_state["session_id"]
     with st.spinner(random.choice(JOKES)):
         try:
-            response = requests.get(AGENT_API_URL, params={"prompt": user_query})
+            response = requests.get(AGENT_API_URL, params=params)
             response.raise_for_status()
-            return response.json().get("response", "No response from agent.")
+            data = response.json()
+            if data.get("session_id"):
+                st.session_state["session_id"] = data["session_id"]
+            return data.get("response", "No response from agent.")
         except requests.exceptions.ConnectionError:
             return "Error: Could not connect to the Agent API. Please ensure the REST server is running."
         except requests.exceptions.RequestException as e:

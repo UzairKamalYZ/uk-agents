@@ -132,10 +132,8 @@ uk-agents/
 │   │   ├── housing/                  # CSV → embedding-ready text pipeline
 │   │   ├── gatherers/                # URL + Polish housing data ingestion
 │   │   ├── scraping/                 # HTTP (BeautifulSoup) + Selenium scrapers
-│   │   └── prompts/
-│   │       ├── System_Prompt.txt
-│   │       ├── reformulated_prompt.txt
-│   │       └── interaction.json
+│   │   ├── urls.txt                  # URLs for the URL ingester (one per line, # comments)
+│   │   └── prompts/System_Prompt.txt
 │   ├── finance/
 │   │   ├── agent.py                  # FinanceAgent(BaseAgent) — stocks MCP only
 │   │   ├── config.py                 # FinanceConfig (prompt path)
@@ -175,7 +173,7 @@ uk-agents/
 │   ├── graph.py                      # MultiAgentGraph — builds + compiles graph
 │   ├── state.py                      # GraphState TypedDict, MAX_AGENT_TURNS
 │   ├── conversation.py               # ConversationMemory — recent turns for the router
-│   ├── tracing.py                    # LangSmith trace tagging
+│   ├── tracing.py                    # tag_current_trace() — agent tags on the request trace
 │   ├── nodes/
 │   │   ├── router.py                 # RouterNode — cleans the message + plans agents
 │   │   ├── agent.py                  # AgentNode — wraps a BaseAgent instance
@@ -322,7 +320,7 @@ plan done → synthesiser (passthrough)
 
 **Configuration**:
 - RAG: enabled (`RagContextManager` + `Embedder`)
-- MCP tools: default (all registered MCP tools — e.g. currency conversion if available)
+- MCP tools: the `finance` server only (`_mcp.langchain_tools(server_name="finance")` — currency conversion and other finance helpers)
 - Vector store: Pinecone (cloud), configured via `STORE_TYPE`
 - System prompt: strict data scope — if no matching listings in context, says so honestly
 
@@ -334,7 +332,7 @@ user_prompt
   ▼
 [retrieve node]
   Embedder.embed_query(user_prompt)
-  → VectorStore.search(query_vector, k=5)
+  → VectorStore.search(query_vector, k=RAG_K)   (default 5)
   → RagContextManager formats results as readable text
   → state["context"] = "Property 1: ...\nProperty 2: ..."
   │
@@ -574,7 +572,7 @@ Two-node graph: `retrieve → generate`.
 
 ### Embedder (`core/src/model/embedder.py`)
 
-Uses the model in `SENTENCE_TRANSFORMER_MODEL`, normally `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional float32 vectors). `RagContextManager` asks for the top 5 matches.
+Uses the model in `SENTENCE_TRANSFORMER_MODEL`, normally `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional float32 vectors). `RagContextManager` asks for the top `RAG_K` matches (default 5).
 
 | Method | Purpose |
 |---|---|
@@ -630,7 +628,7 @@ Both accept `"timeout": <seconds>` (default 60).
 def get_mcp_tools(self) -> list:
     return _mcp.langchain_tools(server_name="stocks")
 
-# PropertySearchAgent gets all tools (or pass [] for none)
+# Return None for every registered tool, or [] for none
 def get_mcp_tools(self) -> list | None:
     return None   # None = all registered tools
 ```
@@ -654,7 +652,7 @@ class BaseClient(ABC):
 | Client | Entry point | Transport | Notes |
 |---|---|---|---|
 | `RestClient` | `clients/rest/main.py` | FastAPI + SSE (port 8000) | Optional `X-API-Key` auth; `session_id` continues a conversation |
-| `StreamlitClient` | `clients/streamlit/main.py` | Web UI (port 8501) | Calls the REST API (start it first); sends no session id, so each message is a fresh conversation |
+| `StreamlitClient` | `clients/streamlit/main.py` | Web UI (port 8501) | Calls the REST API (start it first); keeps the returned `session_id`, so a browser chat is one conversation |
 | `TelegramClient` | `clients/telegram/main.py` | Telegram long-polling | Per-chat session; text and voice notes; announces the working agent |
 | `CronClient` | `clients/cron/main.py` | Scheduled loop | Fires `CRON_SEARCH_PROMPT` every 30 min |
 | `WhatsAppListener` | `agents/whatsapp/main.py` | Green API polling | Standalone — does not use OrchestratorAgent |
@@ -682,12 +680,12 @@ Pass the returned `session_id` on the next call to continue the conversation; wi
 python -m agents.property.gatherers.pl_housing_data_collector
 ```
 
-Reads every CSV in `../datasets/pl-housing` — **relative to the directory you run it from** (from the project root that is a `datasets/` folder next to the project, not inside it). Streams the CSVs in chunks, converts each row to a text document, embeds in batches of 100, and saves the vectors to the configured store.
+Reads every CSV in `HOUSING_DATASET_DIR` (default `agents/property/datasets/pl-housing`, resolved from the project root). Streams the CSVs in chunks, converts each row to a text document, embeds it, and saves the vectors to the configured store in batches of 100. With no CSV files there it logs where it looked and stops.
 
 ### From URLs
 
 ```bash
-# Create agents/property/urls.txt (or point URLS_FILE elsewhere) — one URL per line
+# Add URLs to agents/property/urls.txt (or point URLS_FILE elsewhere) — one per line, # for comments
 python -m agents.property.gatherers.data_collector
 ```
 
@@ -718,7 +716,6 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 | `SENTENCE_TRANSFORMER_MODEL` | _(required)_ | Embedding model, e.g. `sentence-transformers/all-MiniLM-L6-v2` |
 | `PINECONE_API_KEY` | _(required)_ | Pinecone API key |
 | `PINECONE_INDEX_NAME` | _(required)_ | Pinecone index name (created automatically if missing) |
-| `PINECONE_ENVIRONMENT` | — | Passed to the Pinecone store |
 | `FINANCE_PINECONE_INDEX_NAME` | `PINECONE_INDEX_NAME`, else `finance-agent` | Finance agent's index (`agents/finance/config.py`) |
 
 ### Paths
@@ -727,6 +724,8 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 |---|---|---|
 | `PROMPT_FILE` | `agents/property/prompts/System_Prompt.txt` | Property agent system prompt |
 | `URLS_FILE` | `agents/property/urls.txt` | URL list for the URL ingester |
+| `HOUSING_DATASET_DIR` | `agents/property/datasets/pl-housing` | CSV folder for the housing ingester |
+| `RAG_K` | `5` | Listings returned per vector search |
 | `ROUTER_PROMPT_FILE` | `orchestrator/prompts/router.txt` | Router prompt (cleanup + agent plan) |
 | `CONFIRMATION_PROMPT_FILE` | `orchestrator/prompts/confirmation.txt` | Classifies replies to a pending item |
 | `CHECKPOINT_DB_FILE` | `checkpoints.db` | Orchestrator checkpointer (paused confirmations only) |
@@ -736,7 +735,7 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 | `SESSION_DB_FILE` | `sessions.db` | SQLite: agent chat history, the router's conversation memory, FBR session ids |
 | `MAX_HISTORY_TURNS` | `10` | Agent history window (turns) |
 
-Path settings resolve relative values from the project root. `MEMORY_FILE`, `INTERACTION_FILE`, `REFORMULATION_PROMPT` and `RAG_K` still exist in `Config` but nothing reads them.
+Path settings resolve relative values from the project root.
 
 ### Clients
 

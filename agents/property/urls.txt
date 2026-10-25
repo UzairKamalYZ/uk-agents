@@ -1,0 +1,3 @@
+# Listing pages to scrape and index, one URL per line.
+# Run: python -m agents.property.gatherers.data_collector
+# Lines starting with "#" and blank lines are ignored.

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class NullRagContextManager:
     """No-op RAG context manager — returns empty string, skips all vector search."""
 
-    def get_context(self, user_prompt: str, k: int = 5) -> str:
+    def get_context(self, user_prompt: str, k: int | None = None) -> str:
         return ""
 
 

@@ -37,15 +37,13 @@ class Config:
     # true → Anthropic API (ANTHROPIC_API_KEY); false → local Claude Code CLI and its login
     ANTHROPIC_API = os.getenv("ANTHROPIC_API", "true").lower() == "true"
     SENTENCE_TRANSFORMER_MODEL = os.getenv("SENTENCE_TRANSFORMER_MODEL")
-    MEMORY_FILE = os.getenv("MEMORY_FILE")
     URLS_FILE = _project_path("URLS_FILE", "agents/property/urls.txt")
+    # Folder of Polish housing CSVs indexed by agents.property.gatherers.pl_housing_data_collector
+    HOUSING_DATASET_DIR = _project_path("HOUSING_DATASET_DIR", "agents/property/datasets/pl-housing")
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-    PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
     # Property agent prompts
     PROMPT_FILE = _project_path("PROMPT_FILE", "agents/property/prompts/System_Prompt.txt")
-    INTERACTION_FILE = _project_path("INTERACTION_FILE", "agents/property/prompts/interaction.json")
-    REFORMULATION_PROMPT = _project_path("REFORMULATION_PROMPT", "agents/property/prompts/reformulated_prompt.txt")
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")

@@ -5,8 +5,10 @@ from .vector_store import VectorStore
 
 class PineconeStore(VectorStore):
 
-    def __init__(self, index_name: str, dim: int, api_key: str, env: str):
-        pinecone = Pinecone(api_key=api_key, environment=env)
+    def __init__(self, index_name: str, dim: int, api_key: str):
+        # Serverless: the region comes from the index spec, not a client "environment"
+        # (pinecone>=3 rejects environment=)
+        pinecone = Pinecone(api_key=api_key)
         if index_name not in pinecone.list_indexes().names():
             pinecone.create_index(
                 name=index_name,

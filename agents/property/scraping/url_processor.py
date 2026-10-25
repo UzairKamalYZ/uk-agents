@@ -1,6 +1,10 @@
+import logging
 import os
-from .web_scraper import WebScraper
 import re
+
+from .web_scraper import WebScraper
+
+logger = logging.getLogger(__name__)
 
 class UrlProcessor:
     """Scrapes URLs and extracts property listings."""
@@ -12,10 +16,12 @@ class UrlProcessor:
         listings = []
 
         if not os.path.exists(file_path):
+            logger.warning("url-processor: %s not found — no URLs to scrape (set URLS_FILE)", file_path)
             return listings
 
         with open(file_path, "r") as f:
-            urls = [u.strip() for u in f.readlines() if u.strip()]
+            # One URL per line; blank lines and "#" comments are skipped
+            urls = [u.strip() for u in f.readlines() if u.strip() and not u.strip().startswith("#")]
 
         for url in urls:
             print(f"----------Scraping----->>>>> {url}...")

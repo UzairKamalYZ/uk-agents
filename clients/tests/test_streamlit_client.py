@@ -72,6 +72,7 @@ class TestGetAgentResponse(unittest.TestCase):
         """_get_agent_response returns the 'response' field from the API JSON."""
         mock_st.spinner.return_value.__enter__ = MagicMock(return_value=None)
         mock_st.spinner.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.session_state = {}
         mock_get.return_value.json.return_value = {"response": "Found 3 flats."}
         mock_get.return_value.raise_for_status = MagicMock()
 
@@ -85,6 +86,7 @@ class TestGetAgentResponse(unittest.TestCase):
         """_get_agent_response passes the user query as the 'prompt' param."""
         mock_st.spinner.return_value.__enter__ = MagicMock(return_value=None)
         mock_st.spinner.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.session_state = {}
         mock_get.return_value.json.return_value = {"response": "ok"}
         mock_get.return_value.raise_for_status = MagicMock()
 
@@ -99,6 +101,7 @@ class TestGetAgentResponse(unittest.TestCase):
         import requests as _requests
         mock_st.spinner.return_value.__enter__ = MagicMock(return_value=None)
         mock_st.spinner.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.session_state = {}
         mock_get.side_effect = _requests.exceptions.ConnectionError
 
         result = _get_agent_response("anything")
@@ -112,12 +115,31 @@ class TestGetAgentResponse(unittest.TestCase):
         """_get_agent_response falls back to a default string when 'response' is absent."""
         mock_st.spinner.return_value.__enter__ = MagicMock(return_value=None)
         mock_st.spinner.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.session_state = {}
         mock_get.return_value.json.return_value = {}
         mock_get.return_value.raise_for_status = MagicMock()
 
         result = _get_agent_response("anything")
 
         self.assertEqual(result, "No response from agent.")
+
+    @patch("clients.streamlit.main.st")
+    @patch("clients.streamlit.main.requests.get")
+    def test_should_continue_the_conversation_when_a_session_id_was_returned(self, mock_get, mock_st):
+        """The session id from the first reply is sent with every later message."""
+        mock_st.spinner.return_value.__enter__ = MagicMock(return_value=None)
+        mock_st.spinner.return_value.__exit__ = MagicMock(return_value=False)
+        mock_st.session_state = {}
+        mock_get.return_value.json.return_value = {"response": "ok", "session_id": "abc"}
+        mock_get.return_value.raise_for_status = MagicMock()
+
+        _get_agent_response("2-bed Warsaw")
+        _get_agent_response("cheaper ones?")
+
+        self.assertEqual(mock_get.call_args_list[0].kwargs["params"], {"prompt": "2-bed Warsaw"})
+        self.assertEqual(mock_get.call_args_list[1].kwargs["params"],
+                         {"prompt": "cheaper ones?", "session_id": "abc"})
+        self.assertEqual(mock_st.session_state["session_id"], "abc")
 
 
 if __name__ == "__main__":

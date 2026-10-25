@@ -47,7 +47,7 @@ uk-agents/
 │   ├── state.py                # GraphState, MAX_AGENT_TURNS
 │   ├── agent_registry.py       # agents.json → AgentEntry list
 │   ├── conversation.py         # ConversationMemory — recent turns for the router
-│   ├── tracing.py              # LangSmith tagging helpers
+│   ├── tracing.py              # tag_current_trace() — agent tags on the LangSmith request
 │   ├── nodes/                  # router, agent, synthesiser, confirmation
 │   └── prompts/                # router.txt, synthesiser.txt, confirmation.txt
 ├── clients/                    # base.py (BaseClient) + rest/, streamlit/, telegram/, cron/
@@ -100,7 +100,7 @@ All clients implement `BaseClient` (`start()` blocks until stopped, `stop()`, co
 | Client | Backend call | Notes |
 |---|---|---|
 | REST (`:8000`) | `aask` / `astream` | `session_id` param continues a conversation; SSE streaming |
-| Streamlit (`:8501`) | HTTP → REST `/ask` | Needs the REST API running; no session id, so no memory between messages |
+| Streamlit (`:8501`) | HTTP → REST `/ask` | Needs the REST API running; keeps the returned `session_id`, so a browser chat is one conversation |
 | Telegram | `aask(..., on_route=…)` | Per-chat session; voice notes (faster-whisper); shows "🤖 <Agent> is working…" |
 | Cron | `ask` | Sends `CRON_SEARCH_PROMPT` every 30 minutes |
 
@@ -124,9 +124,11 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `ANTHROPIC_API_KEY` | — | Needed when `ANTHROPIC_API=true` |
 | `STORE_TYPE` | `pinecone` | Vector store backend (`pinecone` only) |
 | `SENTENCE_TRANSFORMER_MODEL` | — | Embedding model, e.g. `sentence-transformers/all-MiniLM-L6-v2` (384-dim) |
-| `PINECONE_API_KEY` / `PINECONE_INDEX_NAME` / `PINECONE_ENVIRONMENT` | — | Pinecone credentials and index (index auto-created: cosine, AWS us-east-1) |
+| `PINECONE_API_KEY` / `PINECONE_INDEX_NAME` | — | Pinecone key and index (created if missing: serverless, cosine, AWS us-east-1) |
 | `PROMPT_FILE` | `agents/property/prompts/System_Prompt.txt` | Property agent prompt (also `LlmModelGraph`'s fallback prompt) |
-| `URLS_FILE` | `agents/property/urls.txt` | URL list for `agents.property.gatherers.data_collector` (create it) |
+| `URLS_FILE` | `agents/property/urls.txt` | URL list for `agents.property.gatherers.data_collector` — one per line, `#` comments allowed |
+| `HOUSING_DATASET_DIR` | `agents/property/datasets/pl-housing` | CSVs for `agents.property.gatherers.pl_housing_data_collector` |
+| `RAG_K` | `5` | Listings returned per vector search |
 | `MAX_HISTORY_TURNS` | `10` | Agent history window (turns) |
 | `SESSION_DB_FILE` | `sessions.db` | Agent chat history, the router's conversation memory, FBR session ids |
 | `CHECKPOINT_DB_FILE` | `checkpoints.db` | Orchestrator checkpointer — only conversations paused for a confirmation |
@@ -145,7 +147,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `SBR_WEBDRIVER` | — | Selenium WebDriver URL, read directly by `agents/property/scraping/scrape_se.py` |
 | `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | `false` / — / `uk-agents` | LangSmith tracing |
 
-`FINANCE_PROMPT_FILE` and `FINANCE_PINECONE_INDEX_NAME` live in `agents/finance/config.py`. `MEMORY_FILE`, `INTERACTION_FILE`, `REFORMULATION_PROMPT` and `RAG_K` exist in `Config` but nothing reads them (RAG uses k=5).
+`FINANCE_PROMPT_FILE` and `FINANCE_PINECONE_INDEX_NAME` live in `agents/finance/config.py`.
 
 ---
 
