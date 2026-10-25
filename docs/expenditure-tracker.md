@@ -21,20 +21,22 @@ up to date whenever the tracker changes: it is the reference for every future fe
 Telegram (text or voice note)
   │  voice → local faster-whisper transcript ("🎤 You said: …")
   ▼
-OrchestratorAgent.ask(..., on_route=…)
+OrchestratorAgent.aask(..., on_route=…)
   │
-  ├─ normaliser   cleans text: "aldi ten" → "Aldi €10 2026-10-19"; resolves yes/no on a pending item
-  ├─ supervisor   picks expenditure_tracker  → on_route → "🤖 Expenditure Tracker is working on your query…"
+  ├─ router        one call: cleans the text ("aldi ten" → "Aldi €10") and plans [expenditure_tracker]
+  │                → on_route → "🤖 Expenditure Tracker is working on your query…"
   ├─ expenditure_tracker
-  │     ExpenditureAgent.ask prefixes "Today is …", Claude picks ONE of the agent's in-process tools
-  │     and returns the tool's text verbatim
-  └─ synthesiser  single agent → passthrough (the reply is already formatted)
+  │     ExpenditureAgent.aask logs the input, prefixes "Today is …", Claude picks ONE of the
+  │     agent's in-process tools and returns the tool's text verbatim
+  ├─ synthesiser   single agent → passthrough (the reply is already formatted)
+  └─ confirmation  only when the agent left a pending item: pauses until the next message,
+                   then classifies it (confirm / cancel / correction / unrelated)
   ▼
 Telegram edits the status message into the final answer
 ```
 
-Routing is logged (`[route] request=… supervisor → expenditure_tracker (…)`) and traced in
-LangSmith (`route → expenditure_tracker`, tag `agent:expenditure_tracker`).
+The routing decision is logged (`[router] plan=['expenditure_tracker']`) and the request trace
+in LangSmith is tagged `agent:expenditure_tracker`.
 
 ## 3. Behaviour
 
@@ -53,7 +55,7 @@ A missing currency or date **never** triggers a confirmation.
 |---|---|---|---|
 | Log an expense | "Aldi 10", "Colruyt 90 yesterday" | `add_expense` | ✅ saved + this/last month totals |
 | Something's unclear | "spent something at the shop", "Colruyt 9000" | `propose_expense` | ⚠️ "Please check…" (saved only after "yes") |
-| Confirm / discard / correct | "yes" / "no" / "it was 19" | normaliser → `confirm_pending` / `discard_pending` / agent | saved / "Discarded." / re-checked |
+| Confirm / discard / correct | "yes" / "no" / "it was 19" | confirmation node → `confirm_pending` / `discard_pending` / agent | saved / "Discarded." / re-checked |
 | Undo | "undo last", "delete the last one" | `undo_last_expense` | ↩️ removed + totals |
 | How much did I spend? | "how much are my expenses", "what did I spend this month" | `get_expense_summary` | totals for this month and last month, plus the 5 largest expenses this month |
 | Where did it go? | "spending per shop last month" | `get_expense_breakdown` | per-place totals for a month, largest first |
@@ -93,9 +95,11 @@ short-lived connection, with WAL mode and a 10 s busy timeout.
 | `agents/expenditure/ledger.py` | `ExpenseLedger`: all SQL; the only code that touches the database |
 | `agents/expenditure/replies.py` | All user-facing text |
 | `agents/expenditure/tools.py` | `build_tools()`: the six LangChain tools, run in-process. Validates input (positive amounts, ISO dates) and logs every tool call. Each tool's description is its function's docstring |
-| `agents/expenditure/agent.py` | `ExpenditureAgent`: date prefix, pending hooks for the normaliser, refuses with "unavailable" if the tools didn't load |
+| `agents/expenditure/agent.py` | `ExpenditureAgent`: logs every input, adds the date prefix (`ask` and `aask`), and implements the pending hooks the confirmation node calls |
 | `agents/expenditure/prompts/System_Prompt.txt` | Which tool for which intent; reply-verbatim rule |
-| `agents.json` → `expenditure_tracker` | Routing description, display name, waiting remarks |
+| `agents.json` → `expenditure_tracker` | Routing description, display name, summary, waiting remarks |
+
+Anyone who can message the Telegram bot can use the tracker; there is one shared ledger.
 
 ## 6. Operations
 

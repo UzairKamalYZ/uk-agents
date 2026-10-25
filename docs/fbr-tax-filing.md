@@ -9,6 +9,8 @@ Files your Pakistan income tax return (Form 114(1)) and wealth statement (Form 1
 - Your IRIS login saved in Chrome's password manager. Log in to IRIS once by hand and accept Chrome's "Save password?" prompt, or add it in Chrome → Settings → Passwords. After that, the agent logs in by clicking Login itself. If no login is saved yet, it asks you to log in once and save the password.
 - Optional: set `FBR_TAX_DIR` if the filing project lives somewhere else.
 
+Anyone who can message the Telegram bot can start or continue a filing — there is no owner check — so keep the bot to yourself.
+
 ## Before any draft: the status check
 
 The agent keeps its own record of every tax year in `filings.db` (per-user data dir, `…/uk-agents/fbr_tax/`). Before creating, opening or deleting a draft for tax year N, it checks IRIS: Completed Tasks → DECLARATION for N-1 and N, and the Draft tab for N. It records what it saw, then follows the decision made in code:
@@ -44,12 +46,13 @@ bot:  Draft saved in IRIS. Review it and submit it yourself in IRIS,
 - **You log in.** It never types your CNIC, password, OTP or PIN. If Chrome is still logged in to IRIS, it carries on. If Chrome has filled in your saved login, it clicks Login itself. If nothing is saved, it asks you to log in once and save the password. You still enter the CAPTCHA and any OTP. It clicks Login at most twice in a row.
 - **Submission.** It stops at Save Draft. It clicks Submit only when your own message says so, and even then you type the 4-digit e-filing PIN yourself.
 - **One step at a time.** There is one browser. A message sent while a step is running gets "Still working…".
+- **How a message reaches it.** The router plans `fbr_tax_filing`; `FbrTaxAgent.aask()` runs the Claude Code turn in a worker thread. It never goes through the plain LLM pipeline (when it once did, Chrome never opened and the model wrote its Skill call out as text).
 - **A step can take minutes.** Reading a whole return is many page loads.
 
 ## Safety rails
 
 - **Enforced in code (`agents/fbr_tax/runner.py`):**
-  - no shell and no web tools;
+  - the only built-in tools are Read, Write, Edit, Glob, Grep and Skill (to run `fbr-iris-filing`) — no shell, no web tools;
   - files can be written only in `snapshots/` and the skill's `iris-notes.md`;
   - the only browser tools are Claude in Chrome's;
   - everything else is denied, not asked.

@@ -1,12 +1,12 @@
 # UK Agents
 
-**UK Agents** is Uzair Kamal's (UK) personal repository of AI agents. Each agent does one job for Uzair: finding property, analysing stocks, watching his inboxes, covering for him in WhatsApp groups, or just chatting. New agents are added all the time, and they don't have to be related to each other.
+**UK Agents** is Uzair Kamal's (UK) personal repository of AI agents. Each agent does one job for Uzair: finding property, analysing stocks, watching his inboxes, covering for him in WhatsApp groups, tracking his spending, filing his Pakistan tax return, or just chatting. New agents are added all the time, and they don't have to be related to each other.
 
 All agents share the same foundation:
 
 - **One base class**: every agent extends `BaseAgent` (`core/`), so the LLM (Claude), session history, optional RAG and MCP tools come for free. A new agent is a prompt plus a few hook methods.
 - **One registry**: agents are listed in `agents.json`. Adding, disabling or re-modelling an agent is a config change.
-- **One front door**: the REST API, Streamlit UI, Telegram bot and cron job all talk to a single `OrchestratorAgent`. Its router reads each request and plans which agent(s) handle it, by their `description`.
+- **One front door**: the REST API, Streamlit UI, Telegram bot and cron job all talk to a single `OrchestratorAgent`. Its router reads each request (plus the last few turns of the conversation) and plans which agent(s) handle it, by their `description`.
 - **Background services**: agents that need to run on their own (e.g. the WhatsApp listener and the mail monitor) have standalone entrypoints that run alongside the orchestrator.
 
 ### Agent catalog
@@ -18,6 +18,8 @@ All agents share the same foundation:
 | `finance_agent` | Stock analysis and investment questions | Yahoo Finance MCP | Orchestrator |
 | `whatsapp_agent` | Short, mobile-friendly property answers | RAG (Pinecone) | Orchestrator |
 | `mail_agent` | Questions about emails, drafting replies | — | Orchestrator |
+| `expenditure_tracker` | Logs spending ("Aldi 10" or a voice note), undo, monthly totals and breakdowns — see [docs/expenditure-tracker.md](docs/expenditure-tracker.md) | SQLite ledger, in-process tools | Orchestrator |
+| `fbr_tax_filing` | Prepares the Pakistan FBR income tax return and wealth statement on IRIS, up to a saved draft — see [docs/fbr-tax-filing.md](docs/fbr-tax-filing.md) | Claude Code session driving Chrome | Orchestrator |
 | WhatsApp listener | Detects when Uzair is mentioned in a group and auto-replies | Green API | Standalone (`agents.whatsapp.main`) |
 | Mail monitor | Summarises new emails across inboxes and sends a digest | IMAP + Green API | Standalone (`agents.mails.main`) |
 
@@ -64,7 +66,8 @@ MultiAgentGraph             ← LangGraph multi-agent graph (async, checkpointed
   │             finance_agent         ← live stock data via Yahoo Finance MCP
   │             whatsapp_agent        ← RAG property search, mobile-friendly replies
   │             mail_agent            ← email questions from conversation history
-  │             expenditure_tracker   ← personal expense ledger
+  │             expenditure_tracker   ← personal expense ledger (SQLite)
+  │             fbr_tax_filing        ← Claude Code + Chrome on FBR IRIS
   │
   ├─► synthesiser           ← one agent: its answer as is; several: LLM merge
   │       │
@@ -80,7 +83,7 @@ WhatsAppListener  ← polls Green API → LLM mention check → auto-reply
 MailMonitor       ← polls IMAP inboxes → LLM summarise → periodic delivery
 ```
 
-Every user message enters at the router, which cleans it and plans the agents in one structured LLM call. The plan runs without further routing calls, and the synthesiser combines the outputs into one reply — so a single-agent message costs one orchestration call on top of the agent's own work.
+Every user message enters at the router, which cleans it and plans the agents in one structured LLM call. The plan runs without further routing calls, and the synthesiser combines the outputs into one reply — so a single-agent message costs one orchestration call on top of the agent's own work. Every answer passes through the output guard (`core/src/output_guard.py`), so tool-call markup a model writes out as text never reaches the user.
 
 ---
 
@@ -98,7 +101,9 @@ uk-agents/
 ├── core/                             # Shared AI infrastructure (all agents import from here)
 │   └── src/
 │       ├── base_agent.py             # BaseAgent ABC — Template Method pattern
-│       ├── utils.py                  # load_prompt() file loader
+│       ├── aio.py                    # BackgroundLoop — event loop on its own thread
+│       ├── output_guard.py           # Strips tool-call markup from every answer
+│       ├── utils.py                  # load_prompt(), run_service()
 │       ├── config/
 │       │   └── config.py             # Settings loaded from .env (absolute path)
 │       ├── model/
@@ -111,10 +116,12 @@ uk-agents/
 │       │   ├── session_manager.py    # SQLite-backed session history
 │       │   ├── mcp_registry.py       # MCPRegistry on the official mcp SDK client
 │       │   └── mcp_tools.py          # Loads mcp.json → shared _mcp registry
-│       └── persistence/
-│           ├── vector_store.py       # Abstract base (add_vectors / search)
-│           ├── factory.py            # Selects the vector store backend (Pinecone)
-│           └── pinecone_store.py     # Cloud Pinecone store
+│       ├── persistence/
+│       │   ├── vector_store.py       # Abstract base (add_vectors / search)
+│       │   ├── factory.py            # Selects the vector store backend (Pinecone)
+│       │   └── pinecone_store.py     # Cloud Pinecone store
+│       └── speech/
+│           └── transcriber.py        # Local faster-whisper (Telegram voice notes)
 │
 ├── agents/                           # Domain-specific agent implementations
 │   ├── conversational/
@@ -141,21 +148,34 @@ uk-agents/
 │   │   └── prompts/
 │   │       ├── System_Prompt.txt
 │   │       └── mention_check.txt     # LLM prompt: "is this message for {user_name}?"
-│   └── mails/                        # Email monitor
-│       ├── agent.py                  # MailAgent(BaseAgent) — email Q&A in orchestrator
-│       ├── monitor.py                # MailMonitor — polls IMAP, summarises, delivers
-│       ├── imap_client.py            # IMAPAccount — fetch messages since a timestamp
-│       ├── email_store.py            # SQLite-backed dedup store (Message-ID tracking)
-│       ├── main.py                   # Standalone entrypoint for the monitor
-│       └── prompts/
-│           ├── System_Prompt.txt
-│           └── summarise_email.txt   # LLM prompt: summarise one email
+│   ├── mails/                        # Email monitor
+│   │   ├── agent.py                  # MailAgent(BaseAgent) — email Q&A in orchestrator
+│   │   ├── monitor.py                # MailMonitor — polls IMAP, summarises, delivers
+│   │   ├── imap_client.py            # IMAPAccount — fetch messages since a timestamp
+│   │   ├── email_store.py            # SQLite-backed dedup store (Message-ID tracking)
+│   │   ├── main.py                   # Standalone entrypoint for the monitor
+│   │   └── prompts/
+│   │       ├── System_Prompt.txt
+│   │       └── summarise_email.txt   # LLM prompt: summarise one email
+│   ├── expenditure/                  # Expense tracker
+│   │   ├── agent.py                  # ExpenditureAgent(BaseAgent) — date prefix, pending hooks
+│   │   ├── ledger.py                 # ExpenseLedger — the SQLite expenses.db
+│   │   ├── tools.py                  # The six in-process LangChain tools
+│   │   ├── replies.py                # Every user-facing reply
+│   │   └── prompts/System_Prompt.txt
+│   └── fbr_tax/                      # FBR-PK tax filing
+│       ├── agent.py                  # FbrTaxAgent(BaseAgent) — one Claude Code turn per message
+│       ├── runner.py                 # Claude Code session (skill + Chrome), locked-down tools
+│       ├── tracker.py                # filings.db + the tracker MCP tools the session uses
+│       └── prompts/System_Prompt.txt
 │
 ├── orchestrator/                     # Multi-agent graph
 │   ├── agent_interface.py            # OrchestratorAgent — public facade
 │   ├── agent_registry.py             # Reads agents.json → live agent instances
 │   ├── graph.py                      # MultiAgentGraph — builds + compiles graph
 │   ├── state.py                      # GraphState TypedDict, MAX_AGENT_TURNS
+│   ├── conversation.py               # ConversationMemory — recent turns for the router
+│   ├── tracing.py                    # LangSmith trace tagging
 │   ├── nodes/
 │   │   ├── router.py                 # RouterNode — cleans the message + plans agents
 │   │   ├── agent.py                  # AgentNode — wraps a BaseAgent instance
@@ -170,8 +190,9 @@ uk-agents/
 │   ├── base.py                       # BaseClient ABC (start / stop)
 │   ├── rest/main.py                  # FastAPI REST API (port 8000)
 │   ├── streamlit/main.py             # Streamlit web UI (port 8501)
-│   ├── telegram/main.py              # Telegram long-polling bot
-│   └── cron/main.py                  # Scheduled search (every 30 min)
+│   ├── telegram/main.py              # Telegram long-polling bot (text + voice notes)
+│   ├── cron/main.py                  # Scheduled search (every 30 min)
+│   └── tests/
 │
 └── logs/
     └── agent.log                     # Unified runtime log (all clients write here)
@@ -214,19 +235,37 @@ After the router and after each agent, `_route_plan` picks the first planned age
 
 One LLM call with structured output (`RoutePlan`): the cleaned `text` (transcription fixes, spoken amounts → digits, relative dates → YYYY-MM-DD) and the ordered `agents` list. The list items are an enum of the enabled agent names, so the model cannot name an agent that does not exist. Rules live in `orchestrator/prompts/router.txt`: greetings → the small-talk agent only; one topic → one agent; several topics → each needed agent, ordered by dependency.
 
+The router also sees the session's last 3 turns (`orchestrator/conversation.py`, stored in `sessions.db`), sent as a separate message before the user's one. A follow-up such as "yes" or "and for last month?" is rewritten into a self-contained request and sent to the agent that asked.
+
 ### Agent node (`orchestrator/nodes/agent.py`)
 
 Wraps a `BaseAgent` instance. When invoked:
-1. Awaits `agent.aask(user_input, session_id=session_id)` (or runs `agent.ask` in a worker thread)
-2. Stores result in `state["agent_outputs"][agent_name]`
-3. Increments `state["turns"]`
+1. Awaits `agent.aask(user_input, session_id=session_id)` (or runs a sync-only `agent.ask` in a worker thread)
+2. Scrubs tool-call markup from the answer (output guard) — an answer that was only markup becomes a polite "please try again"
+3. Stores the result in `state["agent_outputs"][agent_name]` and increments `state["turns"]`
+4. If the agent left a pending item (`pending_summary()`), marks the turn as awaiting a confirmation
 
 ### Synthesiser node (`orchestrator/nodes/synthesiser.py`)
 
 Merges all agent outputs into one clean answer.
 
 - **Single-agent passthrough**: if only one agent ran, the synthesiser returns that output directly without an extra LLM call.
-- **Multi-agent synthesis**: injects all collected outputs as context and calls the LLM to write a fresh, deduplicated, markdown-formatted reply.
+- **Multi-agent synthesis**: injects all collected outputs as context and calls the LLM to write a fresh, deduplicated, markdown-formatted reply (scrubbed by the output guard; streamed tokens too).
+
+### Confirmation node (`orchestrator/nodes/confirmation.py`)
+
+When an agent leaves a pending item (e.g. the expense tracker asks "Please check this expense… reply yes to save"), the graph pauses here with LangGraph's `interrupt()` and the checkpointer saves the run. The user's next message on that session resumes it and is classified in one structured LLM call:
+
+| Verdict | Then |
+|---|---|
+| confirm | `agent.confirm_pending()` |
+| cancel | `agent.discard_pending()` → "Discarded." |
+| correction | straight back to that agent with the correction |
+| unrelated | pending item discarded, the message is routed as a fresh turn |
+
+### Agent announcements (`on_route`)
+
+`OrchestratorAgent.aask(..., on_route=fn)` calls `fn(entry)` just before each planned agent runs. Telegram uses it to edit its "🔀 Finding the right agent…" placeholder into "🤖 Expenditure Tracker is working on your query…" plus a random line from the agent's `remarks` in `agents.json`.
 
 ---
 
@@ -295,7 +334,7 @@ user_prompt
   ▼
 [retrieve node]
   Embedder.embed_query(user_prompt)
-  → VectorStore.search(query_vector, k=RAG_K)
+  → VectorStore.search(query_vector, k=5)
   → RagContextManager formats results as readable text
   → state["context"] = "Property 1: ...\nProperty 2: ..."
   │
@@ -326,15 +365,7 @@ LLM response
 
 **Data ingestion**:
 
-Properties are pre-indexed into the vector store offline. Two ingestion methods are provided:
-
-```bash
-# From CSV files (Polish housing data)
-python -m agents.property.housing.housing_data_collector
-
-# From URLs (web scraping)
-python -m agents.property.gatherers.data_collector
-```
+Properties are pre-indexed into the vector store offline — see [Data Ingestion](#data-ingestion).
 
 ---
 
@@ -467,6 +498,22 @@ python -m agents.mails.main
 
 ---
 
+### Expenditure Tracker
+
+**Class**: `agents.expenditure.agent.ExpenditureAgent`
+
+Logs spending from a short message or voice note ("Aldi 10", "Colruyt 90 yesterday"), proposes unclear expenses for a yes/no confirmation, undoes the last entry, and answers spending questions (monthly totals, top 5 expenses, per-shop breakdown). The six tools in `agents/expenditure/tools.py` run in-process over a SQLite ledger (`expenses.db` in `EXPENSES_DIR`, outside the project); every reply is built in code. Full reference: [docs/expenditure-tracker.md](docs/expenditure-tracker.md).
+
+---
+
+### FBR-PK Tax Filing Agent
+
+**Class**: `agents.fbr_tax.agent.FbrTaxAgent`
+
+Prepares the Pakistan income tax return and wealth statement on FBR IRIS, up to a saved draft. It does not use `LlmModelGraph`: each message is one turn of a Claude Code session started in `FBR_TAX_DIR` with the `fbr-iris-filing` skill and Claude in Chrome, with its tools locked down in `runner.py`. Full reference: [docs/fbr-tax-filing.md](docs/fbr-tax-filing.md).
+
+---
+
 ## Core Infrastructure
 
 ### BaseAgent (`core/src/base_agent.py`)
@@ -491,8 +538,16 @@ class BaseAgent(ABC):
 
     # --- Public interface — inherited as-is ---
     def ask(self, prompt, stream=False, session_id=None): ...
+    async def aask(self, prompt, session_id=None) -> str: ...   # what the orchestrator calls
     def close(self): ...
+
+    # --- Optional: pending-confirmation hooks (no-ops by default) ---
+    def pending_summary(self, session_id) -> str | None: ...
+    def confirm_pending(self, session_id) -> str: ...
+    def discard_pending(self, session_id) -> None: ...
 ```
+
+An agent that answers without `LlmModelGraph` (like `FbrTaxAgent`) overrides both `ask()` and `aask()`. If it overrides only `ask()`, `BaseAgent.aask()` runs that `ask()` in a worker thread.
 
 `NullRagContextManager` (also in `base_agent.py`) is the no-op placeholder returned by agents that don't need vector search. It always returns `""` from `get_context()`.
 
@@ -511,13 +566,15 @@ Two-node graph: `retrieve → generate`.
 - Loops up to `MAX_TOOL_CALLS = 5`, executing each tool and appending `ToolMessage` results
 - Returns `response.text` (text blocks only, no thinking blocks) as `state["answer"]`
 
-**Session history**: kept per `session_id` in memory (dict of lists). Sliding window: last `MAX_HISTORY_TURNS * 2` messages.
+**Session history**: stored per agent and `session_id` in SQLite (`SESSION_DB_FILE`, default `sessions.db`), so it survives restarts. Sliding window: last `MAX_HISTORY_TURNS * 2` messages.
 
-**LangSmith tracing**: every `ask()` call is wrapped in `@traceable(name=f"agent.{agent_name}")`. Tool invocations are wrapped in `@traceable(name=f"tool.{tool_name}")`.
+**LangSmith tracing**: every `ask()` / `aask()` call is wrapped in `@traceable(name=f"agent.{agent_name}")`. Tool invocations are wrapped in `@traceable(name=f"tool.{tool_name}")`.
+
+**Claude Code mode** (`ANTHROPIC_API=false`): `create_llm()` returns `ChatClaudeCode`, which runs each call through the local `claude` CLI (Claude Agent SDK) with its logged-in subscription. The agent's tools are exposed to Claude Code as an in-process MCP server and Claude Code runs the tool loop itself; its built-in tools and user/project settings are switched off.
 
 ### Embedder (`core/src/model/embedder.py`)
 
-Uses `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional float32 vectors).
+Uses the model in `SENTENCE_TRANSFORMER_MODEL`, normally `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional float32 vectors). `RagContextManager` asks for the top 5 matches.
 
 | Method | Purpose |
 |---|---|
@@ -596,22 +653,24 @@ class BaseClient(ABC):
 
 | Client | Entry point | Transport | Notes |
 |---|---|---|---|
-| `RestClient` | `clients/rest/main.py` | FastAPI + SSE (port 8000) | Optional `X-API-Key` auth |
-| `StreamlitClient` | `clients/streamlit/main.py` | Web UI (port 8501) | Requires REST API running first |
-| `TelegramClient` | `clients/telegram/main.py` | Telegram long-polling | Per-chat session IDs |
+| `RestClient` | `clients/rest/main.py` | FastAPI + SSE (port 8000) | Optional `X-API-Key` auth; `session_id` continues a conversation |
+| `StreamlitClient` | `clients/streamlit/main.py` | Web UI (port 8501) | Calls the REST API (start it first); sends no session id, so each message is a fresh conversation |
+| `TelegramClient` | `clients/telegram/main.py` | Telegram long-polling | Per-chat session; text and voice notes; announces the working agent |
 | `CronClient` | `clients/cron/main.py` | Scheduled loop | Fires `CRON_SEARCH_PROMPT` every 30 min |
 | `WhatsAppListener` | `agents/whatsapp/main.py` | Green API polling | Standalone — does not use OrchestratorAgent |
 | `MailMonitor` | `agents/mails/main.py` | IMAP polling | Standalone — does not use OrchestratorAgent |
 
-All four use `OrchestratorAgent` as their backend. The Telegram client runs blocking `agent.ask()` calls in a thread executor to avoid blocking the async event loop.
+REST, Telegram and cron use `OrchestratorAgent` directly (Streamlit goes through REST). REST and Telegram are async and await `aask()` / `astream()`; cron calls the blocking `ask()`. Chats are answered concurrently; messages within one chat are handled in order.
+
+**Telegram voice notes** are transcribed locally with faster-whisper (`WHISPER_MODEL`, loaded once at startup), shown as "🎤 You said: …", then answered like text.
 
 ### REST API endpoints
 
 | Method | Path | Params | Response |
 |---|---|---|---|
-| `GET` | `/ask` | `prompt` (str), `stream` (bool, default `false`) | `{"response": str}` or SSE stream |
+| `GET` | `/ask` | `prompt` (str), `stream` (bool, default `false`), `session_id` (str, optional) | `{"response": str, "session_id": str}`, or an SSE stream with the session id in the `X-Session-Id` header |
 
-Streaming format (SSE): `data: {chunk}\n\n` with 10 ms delay between chunks.
+Pass the returned `session_id` on the next call to continue the conversation; without one, every request starts a fresh session. Streaming format (SSE): `data: {chunk}\n\n`, chunks sent as the synthesiser writes them.
 
 ---
 
@@ -620,16 +679,15 @@ Streaming format (SSE): `data: {chunk}\n\n` with 10 ms delay between chunks.
 ### CSV (Polish housing data)
 
 ```bash
-# Place CSV files in agents/property/datasets/pl-housing/
-python -m agents.property.housing.housing_data_collector
+python -m agents.property.gatherers.pl_housing_data_collector
 ```
 
-Streams the CSV in 5 000-row chunks, converts each row to a semantic text document, embeds in batches of 100, and persists to the configured vector store.
+Reads every CSV in `../datasets/pl-housing` — **relative to the directory you run it from** (from the project root that is a `datasets/` folder next to the project, not inside it). Streams the CSVs in chunks, converts each row to a text document, embeds in batches of 100, and saves the vectors to the configured store.
 
 ### From URLs
 
 ```bash
-# Edit agents/property/urls.txt — one URL per line
+# Create agents/property/urls.txt (or point URLS_FILE elsewhere) — one URL per line
 python -m agents.property.gatherers.data_collector
 ```
 
@@ -657,24 +715,28 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 | Variable | Default | Description |
 |---|---|---|
 | `STORE_TYPE` | `pinecone` | Vector store backend (`pinecone` only) |
-| `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
-| `RAG_K` | `5` | Listings returned per vector search |
-| `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
-| `PINECONE_INDEX_NAME` | `property-agent` | Pinecone index name |
+| `SENTENCE_TRANSFORMER_MODEL` | _(required)_ | Embedding model, e.g. `sentence-transformers/all-MiniLM-L6-v2` |
+| `PINECONE_API_KEY` | _(required)_ | Pinecone API key |
+| `PINECONE_INDEX_NAME` | _(required)_ | Pinecone index name (created automatically if missing) |
+| `PINECONE_ENVIRONMENT` | — | Passed to the Pinecone store |
+| `FINANCE_PINECONE_INDEX_NAME` | `PINECONE_INDEX_NAME`, else `finance-agent` | Finance agent's index (`agents/finance/config.py`) |
 
 ### Paths
 
 | Variable | Default | Description |
 |---|---|---|
 | `PROMPT_FILE` | `agents/property/prompts/System_Prompt.txt` | Property agent system prompt |
+| `URLS_FILE` | `agents/property/urls.txt` | URL list for the URL ingester |
 | `ROUTER_PROMPT_FILE` | `orchestrator/prompts/router.txt` | Router prompt (cleanup + agent plan) |
 | `CONFIRMATION_PROMPT_FILE` | `orchestrator/prompts/confirmation.txt` | Classifies replies to a pending item |
 | `CHECKPOINT_DB_FILE` | `checkpoints.db` | Orchestrator checkpointer (paused confirmations only) |
 | `SYNTHESISER_PROMPT_FILE` | `orchestrator/prompts/synthesiser.txt` | Synthesiser merge prompt |
 | `AGENTS_FILE` | `agents.json` | Agent registry |
 | `MCP_FILE` | `mcp.json` | MCP server registry |
-| `SESSION_DB_FILE` | `sessions.db` | SQLite session history |
-| `MAX_HISTORY_TURNS` | `10` | Sliding window depth |
+| `SESSION_DB_FILE` | `sessions.db` | SQLite: agent chat history, the router's conversation memory, FBR session ids |
+| `MAX_HISTORY_TURNS` | `10` | Agent history window (turns) |
+
+Path settings resolve relative values from the project root. `MEMORY_FILE`, `INTERACTION_FILE`, `REFORMULATION_PROMPT` and `RAG_K` still exist in `Config` but nothing reads them.
 
 ### Clients
 
@@ -682,7 +744,17 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | _(required)_ | Token from [@BotFather](https://t.me/BotFather) |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
-| `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000 PLN)_ | Prompt used by the scheduled job |
+| `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled job |
+| `WHISPER_MODEL` | `small` | faster-whisper model for Telegram voice notes: `tiny`, `base`, `small`, `medium`, `large-v3` |
+
+### Expense tracker and FBR filing
+
+| Variable | Default | Description |
+|---|---|---|
+| `EXPENSES_DIR` | _(per-user data dir)_ | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux), `%APPDATA%\uk-agents\expenses` (Windows) |
+| `FBR_TAX_DIR` | `~/work/fbr-tax-filing` | Project holding the `fbr-iris-filing` skill and its `snapshots/` |
+| `FBR_TAX_DATA_DIR` | _(per-user data dir)_`/fbr_tax` | The FBR agent's `filings.db` |
+| `FBR_TAX_MAX_TURNS` | `200` | Tool calls one FBR step may take |
 
 ### WhatsApp (Green API)
 
@@ -737,14 +809,15 @@ Example `MAIL_ACCOUNTS` value:
 - Python 3.13+
 - Either Claude Code installed and logged in (`ANTHROPIC_API=false`, uses your Claude subscription — personal use only), or an [Anthropic API key](https://console.anthropic.com) with credits (`ANTHROPIC_API=true`)
 - Node.js + `npx` (for MCP servers)
-- Pinecone account
+- Pinecone account (property, WhatsApp and finance RAG)
+- For FBR filing: `claude` logged in, Chrome with the Claude in Chrome extension, and the `fbr-iris-filing` skill in `FBR_TAX_DIR`
 
 ### Installation
 
 ```bash
 git clone https://github.com/UzairKamalYZ/uk-agents.git
 cd uk-agents
-uv venv && uv sync
+uv sync --group dev
 ```
 
 Configure the environment:
@@ -770,6 +843,8 @@ python -m clients.rest.main
 ```bash
 # Blocking
 curl "http://localhost:8000/ask?prompt=3+bed+Warsaw"
+# Continue the same conversation
+curl "http://localhost:8000/ask?prompt=cheaper+ones?&session_id=<session_id from the last reply>"
 
 # Streaming (SSE)
 curl "http://localhost:8000/ask?prompt=3+bed+Warsaw&stream=true"
@@ -789,6 +864,8 @@ python -m clients.streamlit.main
 ```bash
 python -m clients.telegram.main
 ```
+
+Send `/start` to the bot, then text or a voice note. Anyone who can message the bot can use every agent.
 
 ### Cron job
 
@@ -828,7 +905,7 @@ Edit `mcp.json` and restart. No Python changes required.
 {"name": "my_server", "command": ["npx", "--yes", "@acme/my-mcp-server"]}
 ```
 
-**HTTP server** (remote JSON-RPC):
+**HTTP server** (Streamable HTTP):
 ```json
 {
   "name": "my_api",
@@ -872,13 +949,20 @@ class MyAgent(BaseAgent):
   "class": "agents.myagent.agent.MyAgent",
   "description": "Handles questions about X. Route here when the user asks about X.",
   "enabled": true,
-  "rag": false
+  "rag": false,
+  "display_name": "My Agent",
+  "summary": "One line the conversational agent uses when asked what the bot can do.",
+  "remarks": ["A line Telegram shows while the agent works…"]
 }
 ```
+
+`description` is what the router routes on; `display_name`, `summary` and `remarks` are optional and only shown to users.
 
 Every agent uses `LLM_PROVIDER` / `LLM_MODEL_NAME` from `.env`. To give one agent a different model, add `"llm_model": "claude-haiku-5-5"` (and optionally `"llm_provider"`) to its entry.
 
 The router will automatically plan your agent in based on its description. No changes to `core/`, `orchestrator/`, or any client are needed.
+
+If your agent answers without `LlmModelGraph` (its own SDK session, a script, …), override both `ask()` and `aask()` — the orchestrator calls `aask()`. Add tests under `agents/myagent/tests/`; they are picked up automatically.
 
 An agent doesn't have to sit behind the orchestrator. If it needs to run on its own (polling, schedules, webhooks), give it a `main.py` entrypoint like `agents/whatsapp/main.py` or `agents/mails/main.py`, reuse `create_llm()` from `core/`, and run it with `python -m agents.<name>.main`.
 
@@ -889,18 +973,17 @@ Add a row for it to the [Agent catalog](#agent-catalog).
 ## Testing
 
 ```bash
-# All tests
-python -m pytest -v
+# All tests (no .env needed)
+uv run python -m pytest -q
 
-# By layer
-python -m pytest core/tests/ -v
-python -m pytest clients/tests/ -v
+# One layer
+uv run python -m pytest core/tests -q
 
 # With coverage
-python -m pytest --cov=core/src --cov=agents --cov=orchestrator --cov=clients --cov-report=term-missing
+uv run python -m pytest --cov=core --cov=orchestrator --cov=clients --cov=agents --cov-report=term-missing
 ```
 
-All external dependencies (LLM calls, vector store, network, Telegram API, MCP subprocesses) are mocked. No real services are required to run the test suite.
+External services (LLM calls, Pinecone, network, Telegram, IMAP, Claude Code) are mocked, so no real service is needed. Cheap local stand-ins are used for real: SQLite on temporary paths, the real LangGraph wiring with scripted fake LLMs, and real MCP servers in-process or over stdio. CI (`.github/workflows/tests.yml`) runs the suite on every push and pull request.
 
 ---
 
@@ -914,14 +997,16 @@ LANGCHAIN_API_KEY=<your-key>
 LANGCHAIN_PROJECT=uk-agents
 ```
 
-**Trace hierarchy** for a typical property search:
+**Trace hierarchy** for a typical stock question:
 
 ```
-orchestrator.request
-  └─ agent.PropertySearchAgent        ← @traceable on LlmModelGraph.ask()
+orchestrator.request                  ← OrchestratorAgent.ask/aask, tagged agent:<name> per routed agent
+  └─ agent.FinanceAgent               ← @traceable on LlmModelGraph.ask()/aask()
        ├─ retrieve                    ← LangGraph node
        └─ generate                    ← LangGraph node
             └─ tool.yfin_get_quotes   ← @traceable on each tool invocation
 ```
+
+The FBR agent's Claude Code session is not traced, but its replies are.
 
 Traces are visible at [smith.langchain.com](https://smith.langchain.com) under the configured project name.
