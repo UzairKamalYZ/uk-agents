@@ -17,7 +17,7 @@ _AGENTS_FILE = Path(Config.AGENTS_FILE)
 class AgentEntry:
     """Holds everything the graph needs to know about one agent."""
     name: str          # routing token, e.g. "property_agent"
-    description: str   # shown to the supervisor LLM so it knows when to route here
+    description: str   # shown to the router LLM so it knows when to route here
     instance: object   # live BaseAgent-compatible object (must have .ask())
     llm_provider: str  # provider used by this agent (e.g. "anthropic")
     llm_model: str     # model name used by this agent (e.g. "claude-opus-5-5")

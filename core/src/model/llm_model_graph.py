@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, AIMessage, AnyMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda
 from langsmith import traceable
 
 from langgraph.graph import StateGraph, START, END
@@ -95,6 +97,31 @@ class LlmModelGraph:
 
         return _run(user_query)
 
+    async def aask(self, user_query: str, session_id: str = None) -> str:
+        """Async ask(): LLM and tool calls are awaited; history I/O runs in a worker thread."""
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+
+        logger.info("[%s] LlmModelGraph.aask() entered (session=%s)", self.agent_name, session_id)
+
+        @traceable(
+            name=f"agent.{self.agent_name}",
+            run_type="chain",
+            tags=["agent"],
+            metadata={"agent": self.agent_name, "session_id": session_id},
+        )
+        async def _run(query: str) -> str:
+            history = await asyncio.to_thread(self._get_history, session_id)
+            result = await self.graph.ainvoke(self._initial_state(query, history))
+            answer = result["answer"]
+            await asyncio.to_thread(self._history.append, self.agent_name, session_id, [
+                HumanMessage(content=query),
+                AIMessage(content=answer),
+            ])
+            return answer
+
+        return await _run(user_query)
+
     def ask_stream(self, user_query: str, session_id: str = None):
         if session_id is None:
             session_id = str(uuid.uuid4())
@@ -111,8 +138,10 @@ class LlmModelGraph:
     def _build_graph(self):
         graph = StateGraph(State)
 
-        graph.add_node("retrieve", self._retrieve_node)
-        graph.add_node("generate", self._generate_node)
+        # Each node has a sync and an async implementation: invoke() uses the
+        # first, ainvoke() the second
+        graph.add_node("retrieve", RunnableLambda(self._retrieve_node, afunc=self._aretrieve_node))
+        graph.add_node("generate", RunnableLambda(self._generate_node, afunc=self._agenerate_node))
 
         graph.add_edge(START, "retrieve")
         graph.add_edge("retrieve", "generate")
@@ -128,8 +157,11 @@ class LlmModelGraph:
         logger.info("[%s] retrieve → context_len=%d", self.agent_name, len(context))
         return {"context": context}
 
-    def _generate_node(self, state: State) -> dict:
-        logger.info("[%s] generate → invoking LLM", self.agent_name)
+    async def _aretrieve_node(self, state: State) -> dict:
+        # Embedding + vector search are blocking — keep them off the event loop
+        return await asyncio.to_thread(self._retrieve_node, state)
+
+    def _initial_messages(self, state: State) -> list:
         messages: list = [SystemMessage(content=self.system_prompt)]
 
         if state["context"]:
@@ -143,6 +175,11 @@ class LlmModelGraph:
 
         messages.extend(state["session_history"])
         messages.append(HumanMessage(content=state["user_prompt"]))
+        return messages
+
+    def _generate_node(self, state: State) -> dict:
+        logger.info("[%s] generate → invoking LLM", self.agent_name)
+        messages = self._initial_messages(state)
 
         response = self.llm.invoke(messages)
 
@@ -188,6 +225,34 @@ class LlmModelGraph:
             "answer": response.text
         }
 
+    async def _agenerate_node(self, state: State) -> dict:
+        """Async twin of _generate_node: same tool loop, awaiting the LLM and tools."""
+        logger.info("[%s] generate → invoking LLM (async)", self.agent_name)
+        messages = self._initial_messages(state)
+        response = await self.llm.ainvoke(messages)
+
+        iterations = 0
+        while iterations < self.MAX_TOOL_CALLS:
+            iterations += 1
+            tool_calls = response.tool_calls or []
+            if not tool_calls:
+                break
+            logger.info("Tool iteration %d: detected %d tool call(s)", iterations, len(tool_calls))
+            messages.append(response)
+            # Independent tool calls from one turn run concurrently
+            results = await asyncio.gather(*(
+                self._ainvoke_tool(call["name"], call.get("args") or {}) for call in tool_calls
+            ))
+            messages.extend(
+                ToolMessage(content=result, tool_call_id=call["id"]) for call, result in zip(tool_calls, results)
+            )
+            response = await self.llm.ainvoke(messages)
+
+        if iterations >= self.MAX_TOOL_CALLS:
+            logger.warning("Max tool iterations reached, forcing final answer")
+
+        return {"answer": response.text}
+
     # ------------------- HELPERS -------------------
 
     @staticmethod
@@ -227,6 +292,31 @@ class LlmModelGraph:
                     args = self._coerce_args(args)
                     logger.info("[%s] calling tool '%s' with args=%s", self.agent_name, name, args)
                     result = _call(**args)
+                    logger.info("[%s] tool '%s' returned %d chars", self.agent_name, name, len(result))
+                    return result
+                except Exception as e:
+                    logger.error("[%s] tool '%s' failed: %s", self.agent_name, name, e)
+                    return f"Error executing tool {name}: {str(e)}"
+
+        logger.warning("[%s] tool '%s' not found", self.agent_name, name)
+        return f"Tool '{name}' not found."
+
+    async def _ainvoke_tool(self, name: str, args: dict) -> str:
+        for tool in self._tools:
+            if tool.name == name:
+                @traceable(
+                    name=f"tool.{name}",
+                    run_type="tool",
+                    tags=["tool"],
+                    metadata={"agent": self.agent_name, "tool": name},
+                )
+                async def _call(**kwargs) -> str:
+                    return await tool.ainvoke(kwargs)
+
+                try:
+                    args = self._coerce_args(args)
+                    logger.info("[%s] calling tool '%s' with args=%s", self.agent_name, name, args)
+                    result = await _call(**args)
                     logger.info("[%s] tool '%s' returned %d chars", self.agent_name, name, len(result))
                     return result
                 except Exception as e:

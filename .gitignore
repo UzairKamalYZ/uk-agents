@@ -33,6 +33,7 @@ package-lock.json
 node_modules/
 # Chat session history (SESSION_DB_FILE)
 sessions.db*
+checkpoints.db*
 
 # Expense ledger data
 expenses/

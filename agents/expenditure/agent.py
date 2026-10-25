@@ -1,23 +1,24 @@
+import asyncio
 import logging
-import sqlite3
 from datetime import date
 from pathlib import Path
 
 from core.src.base_agent import BaseAgent, NullRagContextManager
 from core.src.config.config import Config
+from core.src.model.mcp_tools import _mcp
 from core.src.utils import load_prompt
 
 from .ledger import ExpenseLedger
-from .replies import format_amount, format_logged, format_need_amount, format_nothing
-from .tools import build_tools
+from .replies import format_amount, format_logged, format_need_amount, format_nothing, sign
 
 logger = logging.getLogger(__name__)
 
 _PROMPT_FILE = Path(__file__).parent / "prompts" / "System_Prompt.txt"
+UNAVAILABLE_REPLY = sign("⚠️ Expense tracking is unavailable right now — nothing was saved.")
 
 
 class ExpenditureAgent(BaseAgent):
-    """Personal expense tracker — its tools (agents/expenditure/tools.py) run in-process."""
+    """Owner's personal expense tracker — uses the expenses MCP server."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -30,18 +31,31 @@ class ExpenditureAgent(BaseAgent):
         return NullRagContextManager()
 
     def get_mcp_tools(self) -> list:
-        # Not MCP: plain LangChain tools over the local ledger, bound to this agent only.
-        return build_tools()
+        tools = _mcp.langchain_tools(server_name="expenses")
+        # Without tools the LLM could claim a save that never happened — fail closed in ask().
+        self._tools_available = bool(tools)
+        if not self._tools_available:
+            logger.error("ExpenditureAgent: no tools from the 'expenses' MCP server — expense tracking disabled")
+        return tools
 
     def _today(self) -> date:
         return date.today()
 
     def ask(self, prompt: str, stream: bool = False, session_id: str = None):
-        logger.info("ExpenditureAgent: received %r (session=%s)", prompt, session_id)
         self._log_input(prompt)
+        if not self._tools_available:
+            return iter([UNAVAILABLE_REPLY]) if stream else UNAVAILABLE_REPLY
+        return super().ask(self._dated(prompt), stream=stream, session_id=session_id)
+
+    async def aask(self, prompt: str, session_id: str = None) -> str:
+        await asyncio.to_thread(self._log_input, prompt)
+        if not self._tools_available:
+            return UNAVAILABLE_REPLY
+        return await super().aask(self._dated(prompt), session_id=session_id)
+
+    def _dated(self, prompt: str) -> str:
         today = self._today()
-        dated = f"Today is {today.isoformat()} ({today.strftime('%A')}).\n\n{prompt}"
-        return super().ask(dated, stream=stream, session_id=session_id)
+        return f"Today is {today.isoformat()} ({today.strftime('%A')}).\n\n{prompt}"
 
     # Single owner: session_id is ignored for pending state.
 
@@ -72,5 +86,5 @@ class ExpenditureAgent(BaseAgent):
         # The input log is a record, not a gate — a write failure must not block the reply.
         try:
             self._ledger.log_input(text)
-        except (OSError, sqlite3.Error):
-            logger.exception("ExpenditureAgent: could not record the input")
+        except OSError:
+            logger.exception("ExpenditureAgent: could not write the input log")

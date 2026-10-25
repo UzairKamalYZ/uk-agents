@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 from orchestrator.nodes.agent import AgentNode
 
@@ -13,7 +14,7 @@ def _state(**kw):
 
 def test_owner_only_refuses_non_owner():
     agent = MagicMock()
-    out = AgentNode("expenditure_tracker", agent, owner_only=True)(_state(is_owner=False))
+    out = asyncio.run(AgentNode("expenditure_tracker", agent, owner_only=True)(_state(is_owner=False)))
     agent.ask.assert_not_called()
     assert out["agent_outputs"]["expenditure_tracker"] == REFUSAL
     assert out["messages"][0].content == REFUSAL
@@ -22,7 +23,7 @@ def test_owner_only_refuses_non_owner():
 
 def test_owner_only_refuses_when_flag_missing():
     agent = MagicMock()
-    out = AgentNode("x", agent, owner_only=True)(_state())
+    out = asyncio.run(AgentNode("x", agent, owner_only=True)(_state()))
     agent.ask.assert_not_called()
     assert out["agent_outputs"]["x"] == REFUSAL
 
@@ -30,7 +31,7 @@ def test_owner_only_refuses_when_flag_missing():
 def test_owner_only_allows_owner():
     agent = MagicMock()
     agent.ask.return_value = "logged"
-    out = AgentNode("expenditure_tracker", agent, owner_only=True)(_state(is_owner=True))
+    out = asyncio.run(AgentNode("expenditure_tracker", agent, owner_only=True)(_state(is_owner=True)))
     agent.ask.assert_called_once_with("spent 5 on tea", session_id="s1")
     assert out["agent_outputs"]["expenditure_tracker"] == "logged"
     assert out["turns"] == 1
@@ -39,7 +40,7 @@ def test_owner_only_allows_owner():
 def test_regular_agent_ignores_owner_flag():
     agent = MagicMock()
     agent.ask.return_value = "hi"
-    out = AgentNode("conversational_agent", agent)(_state(is_owner=False))
+    out = asyncio.run(AgentNode("conversational_agent", agent)(_state(is_owner=False)))
     agent.ask.assert_called_once()
     assert out["agent_outputs"]["conversational_agent"] == "hi"
 
@@ -56,5 +57,43 @@ def test_graph_initial_state_carries_owner_flag():
     assert st["history"] == ""
     assert st["is_owner"] is True
     assert st["raw_input"] == "hello"
-    assert st["direct"] is False
+    assert st["plan"] == []
     assert st["turns"] == 0
+
+
+def test_awaits_agent_aask_when_available():
+    class AsyncAgent:
+        def __init__(self):
+            self.ask = MagicMock()
+            self.aask = AsyncMock(return_value="async reply")
+
+        def pending_summary(self, session_id):
+            return None
+
+    agent = AsyncAgent()
+    out = asyncio.run(AgentNode("a", agent)(_state()))
+    agent.aask.assert_awaited_once_with("spent 5 on tea", session_id="s1")
+    agent.ask.assert_not_called()
+    assert out["agent_outputs"]["a"] == "async reply"
+    assert "awaiting" not in out
+
+
+def test_sync_only_agent_runs_off_the_event_loop():
+    import threading
+    seen = []
+
+    class SyncAgent:
+        def ask(self, prompt, session_id=None):
+            seen.append(threading.current_thread())
+            return "sync reply"
+
+        def pending_summary(self, session_id):
+            return "something pending"
+
+    async def run():
+        return threading.current_thread(), await AgentNode("a", SyncAgent())(_state())
+
+    loop_thread, out = asyncio.run(run())
+    assert out["agent_outputs"]["a"] == "sync reply"
+    assert seen[0] is not loop_thread
+    assert out["awaiting"] == "a"

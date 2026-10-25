@@ -50,13 +50,13 @@ class SynthesiserNode:
     # LangGraph interface — called as synthesiser_node(state)
     # ------------------------------------------------------------------
 
-    def __call__(self, state: GraphState) -> dict[str, Any]:
+    async def __call__(self, state: GraphState) -> dict[str, Any]:
         agent_outputs = state.get("agent_outputs", {})
 
         if len(agent_outputs) == 1:
             return self._passthrough(agent_outputs)
 
-        return self._synthesise(agent_outputs, state["user_input"])
+        return await self._synthesise(agent_outputs, state["user_input"])
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -73,7 +73,7 @@ class SynthesiserNode:
             "messages": [AIMessage(content=answer, name="synthesiser")],
         }
 
-    def _synthesise(self, agent_outputs: dict[str, str], user_input: str) -> dict[str, Any]:
+    async def _synthesise(self, agent_outputs: dict[str, str], user_input: str) -> dict[str, Any]:
         """Multi-agent path — ask the LLM to merge all outputs."""
         outputs_block = "\n\n".join(
             f"### {name}\n{text}" for name, text in agent_outputs.items()
@@ -82,7 +82,7 @@ class SynthesiserNode:
             SystemMessage(content=f"{self._system_prompt}\n\nAGENT OUTPUTS:\n\n{outputs_block}"),
             HumanMessage(content=user_input),
         ]
-        response = self._llm.invoke(messages)
+        response = await self._llm.ainvoke(messages)
         answer = response.text
 
         logger.info("[synthesiser] final answer len=%d", len(answer))

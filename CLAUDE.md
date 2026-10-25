@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**uk-agents** is Uzair Kamal's (UK) personal repository of AI agents. There will be many agents serving unrelated purposes (property search, stocks, email, WhatsApp, chat, and more to come). Every agent extends the shared `BaseAgent` in `core/` (Claude LLM, LangGraph pipeline, optional RAG over Pinecone, MCP tools) and is registered in `agents.json`. User-facing clients — REST API, Streamlit web UI, Telegram bot, and a scheduled cron job — share the `OrchestratorAgent`, whose supervisor routes each request to the right agent; agents that need to run on their own have standalone entrypoints (`agents/<name>/main.py`). Do not assume a new agent is property-related.
+**uk-agents** is Uzair Kamal's (UK) personal repository of AI agents. There will be many agents serving unrelated purposes (property search, stocks, email, WhatsApp, chat, and more to come). Every agent extends the shared `BaseAgent` in `core/` (Claude LLM, LangGraph pipeline, optional RAG over Pinecone, MCP tools) and is registered in `agents.json`. User-facing clients — REST API, Streamlit web UI, Telegram bot, and a scheduled cron job — share the `OrchestratorAgent`, whose router plans which agent(s) handle each request; agents that need to run on their own have standalone entrypoints (`agents/<name>/main.py`). Do not assume a new agent is property-related.
 
 ---
 
@@ -164,7 +164,9 @@ All settings live in `.env` at the **project root**. `agentP/src/config/config.p
 | `TELEGRAM_OWNER_ID` | _(empty)_ | Owner's Telegram user id or `@username` (comma-separate several; a channel id works for posts made as that channel). Send `/whoami` to the bot to see yours. Required for agents marked `"owner_only": true` in `agents.json` (the expense tracker) |
 | `WHISPER_MODEL` | `small` | Local faster-whisper model size for voice-note transcription |
 | `EXPENSES_DIR` | _(per-user data dir)_ | Expense ledger directory: monthly files, `inputs.log` (every message the expense agent received), history and pending item. Empty → `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `~/Library/Application Support/uk-agents/expenses` (macOS), `%APPDATA%\uk-agents\expenses` (Windows). Relative values resolve from the project root |
-| `NORMALISER_PROMPT_FILE` | `orchestrator/prompts/normaliser.txt` | Orchestrator normaliser prompt path |
+| `ROUTER_PROMPT_FILE` | `orchestrator/prompts/router.txt` | Orchestrator router prompt: message cleanup + agent planning in one call |
+| `CONFIRMATION_PROMPT_FILE` | `orchestrator/prompts/confirmation.txt` | Prompt that classifies the reply to a pending item (confirm / cancel / correction / unrelated) |
+| `CHECKPOINT_DB_FILE` | `checkpoints.db` | SQLite checkpointer for the orchestrator graph; holds only conversations paused for a confirmation (deleted once a run finishes). Relative → from the project root |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled cron job |
 | `SESSION_DB_FILE` | `sessions.db` | SQLite file for persistent chat session history |
@@ -210,14 +212,16 @@ python -m agentP.src.agent
 ### Running Tests
 
 ```bash
-# All tests
-python -m pytest agentP/tests/ clients/tests/ -v
+# All tests (testpaths in pyproject.toml: core, orchestrator, clients, agents/*/tests)
+uv run python -m pytest -q
 
 # With coverage
-python -m pytest agentP/tests/ clients/tests/ --cov=agentP/src --cov=clients --cov-report=term-missing
+uv run python -m pytest --cov=core --cov=orchestrator --cov=clients --cov=agents --cov-report=term-missing
 ```
 
-All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do not write tests that make real network or model calls.
+No `.env` is needed: every setting has a test-safe default. CI (`.github/workflows/tests.yml`) runs the same command on every push and pull request.
+
+All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do not write tests that make real network or model calls. Local stand-ins are fine — e.g. a Python script acting as an MCP server over stdio.
 
 ---
 
@@ -284,7 +288,7 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 | CLI interaction messages | `agentP/src/prompts/interaction.json` |
 | URLs for web scraping | `agentP/urls.txt` |
 | Runtime log | `logs/agent.log` |
-| Agent registry (orchestrator) | `agents.json` — `"owner_only": true` means only the bot owner (`TELEGRAM_OWNER_ID`) may use the agent; others are refused and its pending items are ignored |
+| Agent registry (orchestrator) | `agents.json` — `"owner_only": true` means only the bot owner (`TELEGRAM_OWNER_ID`) may use the agent; others are refused, and a non-owner message in a chat paused on its confirmation runs as a separate turn |
 | MCP server registry | `mcp.json` — `"{python}"` in a command = current interpreter, launched from the project root; `"owner_only": true` keeps the server out of the default tool set (`langchain_tools()` with no `server_name`), so only an agent that asks for it by name gets its tools; `"timeout": <seconds>` (default 60) caps each stdio call — a server that doesn't answer in time is killed and restarted on the next call |
 
 ---
@@ -297,4 +301,8 @@ All external dependencies (LLM, vector store, HTTP, Telegram) must be mocked. Do
 - **Pinecone required**: `STORE_TYPE=pinecone` needs a valid `PINECONE_API_KEY` and network access.
 - **Two Claude backends** (`ANTHROPIC_API` flag): `true` uses the Anthropic API with `ANTHROPIC_API_KEY` (billed per token); `false` uses `ChatClaudeCode` (`core/src/model/claude_code_chat.py`), which drives the local `claude` CLI via the Claude Agent SDK with its logged-in subscription. In Claude Code mode the agent's bound tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`; built-in Claude Code tools and user settings are disabled.
 - **Read `.text`, not `.content`**: Claude responses include thinking blocks, so `AIMessage.content` is a list. Use `response.text` to get the answer string.
+- **Async first, sync wrappers**: the orchestrator graph runs on its own background event loop (`core/src/aio.py` `BackgroundLoop`) with an aiosqlite checkpointer. Clients with an event loop call `OrchestratorAgent.aask()` / `astream()`; sync callers (cron, scripts) use `ask()`. Agents implement `aask()` (`BaseAgent.aask` → `LlmModelGraph.aask`, awaiting the LLM and `tool.ainvoke`); blocking work (SQLite history, ledger files, RAG) runs via `asyncio.to_thread`. An agent without a coroutine `aask` is called through `ask()` in a worker thread. Messages on one session are processed one at a time (per-session lock); different sessions run concurrently.
+- **MCP**: `core/src/model/mcp_registry.py` uses the official `mcp` SDK `Client` (one persistent connection per server on its own background loop). Tests run real MCP servers — in-process `MCPServer` via `MCPRegistry.register_server()` or a stdio script (`core/tests/model/mcp_test_server.py`).
+- **Tests never stub `sys.modules` for project code**: patch the names a test uses (`patch("clients.telegram.main.OrchestratorAgent")`). `core/tests/conftest.py` still stubs heavy third-party ML packages (sentence-transformers, pinecone).
+- **Confirmations are LangGraph interrupts**: an agent that leaves a pending item (`BaseAgent.pending_summary`) makes the orchestrator pause in the `confirmation` node via `interrupt()`; the next message on that session resumes it with `Command(resume=...)` (`MultiAgentGraph._start`). Routing+cleanup (one `router` call per message) and classification use structured output (`llm.with_structured_output(Model, method="json_schema")`), which `ChatClaudeCode` also implements — test fakes for orchestrator LLMs must provide `with_structured_output`.
 - **Session persistence**: Chat history is stored in `SESSION_DB_FILE` (SQLite). The file is created automatically on first run at the project root.

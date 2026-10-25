@@ -6,7 +6,7 @@ All agents share the same foundation:
 
 - **One base class**: every agent extends `BaseAgent` (`core/`), so the LLM (Claude), session history, optional RAG and MCP tools come for free. A new agent is a prompt plus a few hook methods.
 - **One registry**: agents are listed in `agents.json`. Adding, disabling or re-modelling an agent is a config change.
-- **One front door**: the REST API, Streamlit UI, Telegram bot and cron job all talk to a single `OrchestratorAgent`. Its supervisor reads each request and routes it to the right agent(s) by their `description`.
+- **One front door**: the REST API, Streamlit UI, Telegram bot and cron job all talk to a single `OrchestratorAgent`. Its router reads each request and plans which agent(s) handle it, by their `description`.
 - **Background services**: agents that need to run on their own (e.g. the WhatsApp listener and the mail monitor) have standalone entrypoints that run alongside the orchestrator.
 
 ### Agent catalog
@@ -18,8 +18,6 @@ All agents share the same foundation:
 | `finance_agent` | Stock analysis and investment questions | Yahoo Finance MCP | Orchestrator |
 | `whatsapp_agent` | Short, mobile-friendly property answers | RAG (Pinecone) | Orchestrator |
 | `mail_agent` | Questions about emails, drafting replies | — | Orchestrator |
-| `expenditure_tracker` | Logs spending ("Aldi 10"), undo, monthly totals, top expenses, per-shop breakdown — see [docs/expenditure-tracker.md](docs/expenditure-tracker.md) | SQLite + in-process tools | Orchestrator |
-| `fbr_tax_filing` | Prepares your Pakistan FBR return + wealth statement on IRIS in Chrome (your `fbr-iris-filing` skill), up to a saved draft — see [docs/fbr-tax-filing.md](docs/fbr-tax-filing.md) | Claude Code session + Claude in Chrome | Orchestrator |
 | WhatsApp listener | Detects when Uzair is mentioned in a group and auto-replies | Green API | Standalone (`agents.whatsapp.main`) |
 | Mail monitor | Summarises new emails across inboxes and sends a digest | IMAP + Green API | Standalone (`agents.mails.main`) |
 
@@ -56,34 +54,25 @@ User (REST / Streamlit / Telegram / Cron)
 OrchestratorAgent           ← single facade — all clients talk to this
   │
   ▼
-MultiAgentGraph             ← LangGraph supervisor multi-agent graph
+MultiAgentGraph             ← LangGraph multi-agent graph (async, checkpointed)
   │
-  ├─► supervisor            ← LLM decides which agent to call next
+  ├─► router                ← ONE LLM call: clean the message + plan the agents
   │       │
-  │       ├─► conversational_agent  ← greetings, small talk
-  │       │         │
-  │       │         └─► supervisor  (loop back)
-  │       │
-  │       ├─► property_agent        ← RAG: vector search → listings
-  │       │         │
-  │       │         └─► supervisor  (loop back)
-  │       │
-  │       ├─► finance_agent         ← live stock data via Yahoo Finance MCP
-  │       │         │
-  │       │         └─► supervisor  (loop back)
-  │       │
-  │       ├─► whatsapp_agent        ← RAG property search, mobile-friendly replies
-  │       │         │
-  │       │         └─► supervisor  (loop back)
-  │       │
-  │       └─► mail_agent            ← email questions from conversation history
-  │                 │
-  │                 └─► supervisor  (loop back)
+  │       └─► planned agents, in order (no LLM call between them):
+  │             conversational_agent  ← greetings, small talk
+  │             property_agent        ← RAG: vector search → listings
+  │             finance_agent         ← live stock data via Yahoo Finance MCP
+  │             whatsapp_agent        ← RAG property search, mobile-friendly replies
+  │             mail_agent            ← email questions from conversation history
+  │             expenditure_tracker   ← owner's expenses (owner_only)
   │
-  └─► synthesiser           ← merges all agent outputs into one answer
-          │
-          ▼
-        END
+  ├─► synthesiser           ← one agent: its answer as is; several: LLM merge
+  │       │
+  │       ├─► END
+  │       └─► confirmation  ← an agent left a pending item: interrupt() until the
+  │                           user's next message (yes / no / correction / other)
+  ▼
+ END
 
 Standalone background services (run independently):
 
@@ -91,7 +80,7 @@ WhatsAppListener  ← polls Green API → LLM mention check → auto-reply
 MailMonitor       ← polls IMAP inboxes → LLM summarise → periodic delivery
 ```
 
-Every user message enters at the supervisor. The supervisor LLM reads the user's intent and the agent outputs collected so far, then decides which specialist to invoke next or emits `FINISH`. Once finished, the synthesiser combines all outputs into a clean, deduplicated reply.
+Every user message enters at the router, which cleans it and plans the agents in one structured LLM call. The plan runs without further routing calls, and the synthesiser combines the outputs into one reply — so a single-agent message costs one orchestration call on top of the agent's own work.
 
 ---
 
@@ -120,7 +109,7 @@ uk-agents/
 │       │   ├── rag_context_manager.py# Vector search → formatted context string
 │       │   ├── context_builder.py    # Formats listing dicts as readable text
 │       │   ├── session_manager.py    # SQLite-backed session history
-│       │   ├── mcp_registry.py       # MCPProcess, MCPHttpProcess, MCPRegistry
+│       │   ├── mcp_registry.py       # MCPRegistry on the official mcp SDK client
 │       │   └── mcp_tools.py          # Loads mcp.json → shared _mcp registry
 │       └── persistence/
 │           ├── vector_store.py       # Abstract base (add_vectors / search)
@@ -162,18 +151,20 @@ uk-agents/
 │           ├── System_Prompt.txt
 │           └── summarise_email.txt   # LLM prompt: summarise one email
 │
-├── orchestrator/                     # Multi-agent supervisor graph
+├── orchestrator/                     # Multi-agent graph
 │   ├── agent_interface.py            # OrchestratorAgent — public facade
 │   ├── agent_registry.py             # Reads agents.json → live agent instances
 │   ├── graph.py                      # MultiAgentGraph — builds + compiles graph
 │   ├── state.py                      # GraphState TypedDict, MAX_AGENT_TURNS
 │   ├── nodes/
-│   │   ├── supervisor.py             # SupervisorNode — routes between agents
+│   │   ├── router.py                 # RouterNode — cleans the message + plans agents
 │   │   ├── agent.py                  # AgentNode — wraps a BaseAgent instance
-│   │   └── synthesiser.py            # SynthesiserNode — merges outputs
+│   │   ├── synthesiser.py            # SynthesiserNode — merges outputs
+│   │   └── confirmation.py           # ConfirmationNode — interrupt() for pending items
 │   └── prompts/
-│       ├── supervisor.txt            # Routing rules + agent list placeholder
-│       └── synthesiser.txt           # Merge/deduplicate instructions
+│       ├── router.txt                # Cleaning + planning rules, agent list placeholder
+│       ├── synthesiser.txt           # Merge/deduplicate instructions
+│       └── confirmation.txt          # Classify a reply to a pending item
 │
 ├── clients/                          # Delivery interfaces
 │   ├── base.py                       # BaseClient ABC (start / stop)
@@ -190,118 +181,43 @@ uk-agents/
 
 ## Multi-Agent Orchestration
 
-### How the supervisor graph works
+### How the graph works
 
-The supervisor graph is a LangGraph `StateGraph` compiled once at startup inside `MultiAgentGraph.__init__`. Every user request is a fresh invocation of this graph.
+The graph is a LangGraph `StateGraph` compiled once at startup inside `MultiAgentGraph.__init__`, with a SQLite checkpointer so a run can pause for a confirmation and resume on the next message.
 
 **State** (`orchestrator/state.py`):
 
 ```python
 class GraphState(TypedDict):
-    user_input: str                          # cleaned message (the normaliser rewrites it)
-    raw_input: str                           # the message exactly as received
+    user_input: str                          # cleaned message the agents see
+    raw_input: str                           # message as received
     session_id: str
-    request_id: str                          # short id per turn — in logs and LangSmith metadata
-    history: str                             # last 3 user/assistant turns of this session
-    is_owner: bool                           # gates agents marked "owner_only"
-    messages: Annotated[list, add_messages]  # append-only
-    agent_outputs: dict[str, str]            # name → answer collected so far
-    next: str                                # routing token
-    direct: bool                             # normaliser already chose the agent
-    turns: int                               # number of agent calls this turn
+    messages: Annotated[list, add_messages]
+    agent_outputs: dict[str, str]            # name → answer this turn
+    plan: list[str]                          # agents to run, in order (router)
+    next: str                                # where a resumed confirmation goes
+    turns: int                               # agent calls this turn
+    is_owner: bool
+    awaiting: str | None                     # agent waiting for a yes/no
 ```
 
 **Graph topology** (`orchestrator/graph.py`):
 
 ```
-START → normaliser ─┬─► supervisor → [router] → agent_X → supervisor → … → synthesiser → END
-                    ├─► agent_X        (correction to a pending item)
-                    └─► synthesiser    (pending item confirmed / discarded / re-asked)
+START → router → agent_A → agent_B … → synthesiser → END
+                                                    └→ confirmation (interrupt) → …
 ```
 
-The conditional edge logic (the *router*) runs after every supervisor call:
+After the router and after each agent, `_route_plan` picks the first planned agent that has not answered yet, or the synthesiser when none is left (or when `turns` reaches `MAX_AGENT_TURNS`).
 
-| Condition | Routes to |
-|---|---|
-| `turns >= MAX_AGENT_TURNS` (6) | `synthesiser` (loop guard) |
-| `direct` turn and the agent has answered | `synthesiser` |
-| supervisor says an agent name AND that agent hasn't run yet | that agent |
-| supervisor says an agent that already ran | `synthesiser` (prevents re-call loops) |
-| supervisor says `FINISH` or anything else | `synthesiser` |
+### Router node (`orchestrator/nodes/router.py`)
 
-### Normaliser node (`orchestrator/nodes/normaliser.py`)
-
-First node of every turn. One LLM call cleans the message (voice-transcription fixes, spoken numbers → `€90`, "yesterday" → `YYYY-MM-DD`, no currency → euros) and, when an agent holds a pending item (e.g. an expense awaiting "yes"), classifies the reply as confirm / cancel / correction / unrelated. Confirm and cancel are resolved in code without the supervisor, so a bare "yes" never ends up as small talk.
-
-### Follow-ups keep their context
-
-Agents often end with a question ("Want the per-shop breakdown for October?"). The user's reply only makes sense with that question, so the orchestrator keeps a short **conversation memory**: the last 3 user/assistant turns per session, in `sessions.db` under the pseudo-agent `orchestrator` (`orchestrator/conversation.py`). It survives restarts.
-
-```
-user:  Aldi 10
-bot:   ✅ Expense saved … Want the per-shop breakdown for October?   (expenditure_tracker)
-user:  yes
-         normaliser (sees history)  → "Yes, show me the per-shop breakdown for October."
-         supervisor (sees history)  → expenditure_tracker  (rule 0: the agent that asked)
-bot:   🧾 Spending by place — October 2026 …
-```
-
-- The **normaliser** rewrites a follow-up ("yes", "and for last month?", "also Lidl 5") into one self-contained request, so every agent, including a different one, gets the full intent. Messages that already stand alone are left unchanged. Short confirmations of a pending item are classified rather than rewritten.
-- The **supervisor** gets the same history and routes a continuation to the agent that wrote the last answer, unless the request clearly belongs elsewhere.
-- Rewrites are logged: `[normaliser] request=… rewrote 'yes' → '…'`.
-- Only the blocking `ask()` path records turns. `stream=True` reads the history but doesn't save its own turn.
-
-### Telling the user which agent is working
-
-Callers of `OrchestratorAgent.ask(...)` can pass `on_route`, a callback that receives the picked agent's `AgentEntry` **as soon as the supervisor (or normaliser) chooses it — before that agent runs**. The Telegram client uses it to turn its placeholder into a status line, then edits in the final answer:
-
-```
-🔀 Finding the right agent for your query…
-        ↓ (agent picked)
-🤖 Expenditure Tracker is working on your query…
-
-😄 Counting your coins — every cent, no judgement. Well, a little judgement.
-        ↓ (agent answered, synthesiser formatted)
-✅ Expense saved …
-```
-
-The name and remarks come from `agents.json` (`display_name`, `remarks` — one remark is picked at random; without them the name is title-cased from `name`). A failing callback is logged and never breaks the request.
-
-### Routing logs and LangSmith tracing
-
-Every routing decision is logged **and** traced, with the same `request_id` in both:
-
-```
-… orchestrator.tracing - INFO - [route] request=3f9c1a2b7d4e supervisor → expenditure_tracker (user logged a purchase at Aldi)
-```
-
-- The supervisor replies `{"next": "<agent>", "reason": "<why>"}`; the reason goes into the log line and the trace.
-- With `LANGCHAIN_TRACING_V2=true`, each request is one LangSmith trace, `orchestrator.request` → `orchestrator.graph` → one run per node. Every decision adds a small run named **`route → <agent>`**, tagged `agent:<agent>` and `routed_by:supervisor|normaliser`, with `{agent, reason, request_id}` as metadata.
-- The top-level `orchestrator.request` trace is also tagged `agent:<agent>` for each agent that handled it. In LangSmith, filter by tag `agent:expenditure_tracker` to list every request that agent served, or by metadata `request_id` to jump from a log line to its trace.
-- Implementation: `orchestrator/tracing.py` (`record_route`, `tag_current_trace`); run name, tags and metadata for the graph are set in `MultiAgentGraph._run_config`.
-
-### Supervisor node (`orchestrator/nodes/supervisor.py`)
-
-The supervisor is an LLM call that reads the current state and emits JSON:
-
-```json
-{"next": "property_agent", "reason": "user wants 2-bed flats"}   // call this agent next
-{"next": "FINISH"}                                                // enough information, go to synthesiser
-```
-
-Routing rules (from `orchestrator/prompts/supervisor.txt`):
-1. Greeting / small talk → `conversational_agent` → FINISH immediately
-2. Property listings query and property agent hasn't run → `property_agent`
-3. Finance / stocks query and finance agent hasn't run → `finance_agent`
-4. Agent already produced satisfactory output → FINISH
-5. When in doubt → FINISH (never over-call)
-
-The supervisor's output is validated against the known agent names. Malformed responses are fuzzy-matched (e.g. `"property_agent | FINISH"` → `property_agent`) before defaulting to `FINISH`.
+One LLM call with structured output (`RoutePlan`): the cleaned `text` (transcription fixes, spoken amounts → digits, relative dates → YYYY-MM-DD) and the ordered `agents` list. The list items are an enum of the enabled agent names, so the model cannot name an agent that does not exist. Rules live in `orchestrator/prompts/router.txt`: greetings → the small-talk agent only; one topic → one agent; several topics → each needed agent, ordered by dependency.
 
 ### Agent node (`orchestrator/nodes/agent.py`)
 
 Wraps a `BaseAgent` instance. When invoked:
-1. Calls `agent.ask(user_input, session_id=session_id)`
+1. Awaits `agent.aask(user_input, session_id=session_id)` (or runs `agent.ask` in a worker thread)
 2. Stores result in `state["agent_outputs"][agent_name]`
 3. Increments `state["turns"]`
 
@@ -345,7 +261,7 @@ Agents are registered in **`agents.json`** at the project root. The orchestrator
 User: "Hi there!"
   │
   ▼
-supervisor → conversational_agent
+router → plan [conversational_agent]
   │
   ▼
 LlmModelGraph (retrieve skips vector search, generate answers directly)
@@ -354,7 +270,7 @@ LlmModelGraph (retrieve skips vector search, generate answers directly)
 "Hello! Great to have you here. How can I help you find your perfect property today?"
   │
   ▼
-supervisor → FINISH → synthesiser (passthrough)
+plan done → synthesiser (passthrough)
 ```
 
 ---
@@ -454,7 +370,7 @@ python -m agents.property.gatherers.data_collector
 User: "What's the outlook for AAPL?"
   │
   ▼
-supervisor → finance_agent
+router → plan [finance_agent]
   │
   ▼
 LlmModelGraph (retrieve skips — NullRagContextManager returns "")
@@ -468,7 +384,7 @@ generate node: LLM sees system prompt + user question
   LLM synthesises: "AAPL is trading at $X. P/E is Y. Recent news is..."
   │
   ▼
-supervisor → FINISH → synthesiser (passthrough)
+plan done → synthesiser (passthrough)
 ```
 
 ---
@@ -634,18 +550,21 @@ Tools are declared in **`mcp.json`** at the project root. No Python changes are 
 }
 ```
 
-At startup, `mcp_tools.py` reads this file and registers each server in the `MCPRegistry`. Two transport types are supported:
+At startup, `mcp_tools.py` reads this file and registers each server in the `MCPRegistry`, which talks to them through the official `mcp` SDK client (`mcp.Client`). Two transport types are supported:
 
-| Type | Config key | Class |
+| Type | Config key | Notes |
 |---|---|---|
-| stdio subprocess | `"command": [...]` | `MCPProcess` |
-| HTTP JSON-RPC | `"url": "..."` | `MCPHttpProcess` |
+| stdio subprocess | `"command": [...]` | Minimal environment unless listed in `"env": [...]`; `{python}` servers get the full environment |
+| Streamable HTTP | `"url": "..."` | Optional `"api_key_env"` / `"api_key_param"` add a key as a query parameter |
+
+Both accept `"owner_only": true` and `"timeout": <seconds>` (default 60).
 
 **How it works**:
-1. `MCPRegistry` stores one `MCPProcess` (or `MCPHttpProcess`) per server name.
-2. `langchain_tools(server_name=None)` calls `tools/list` on each server and auto-generates LangChain `StructuredTool` objects from the returned JSON schemas.
+1. `MCPRegistry` keeps one persistent `MCPServerConnection` per server, owned by a task on a shared background event loop.
+2. `langchain_tools(server_name=None)` lists each server's tools and generates LangChain `StructuredTool`s from their JSON schemas — usable with `.invoke()` and `.ainvoke()`.
 3. The LLM is bound to these tools via `llm.bind_tools(tools)`.
 4. The `generate` node inspects `response.tool_calls` and routes execution to the right tool.
+5. A call that times out or fails disconnects that server (stopping a stdio subprocess); the next call reconnects.
 
 **Per-agent tool filtering**: agents can restrict which tools they receive:
 
@@ -748,11 +667,13 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 | Variable | Default | Description |
 |---|---|---|
 | `PROMPT_FILE` | `agents/property/prompts/System_Prompt.txt` | Property agent system prompt |
-| `SUPERVISOR_PROMPT_FILE` | `orchestrator/prompts/supervisor.txt` | Supervisor routing prompt |
+| `ROUTER_PROMPT_FILE` | `orchestrator/prompts/router.txt` | Router prompt (cleanup + agent plan) |
+| `CONFIRMATION_PROMPT_FILE` | `orchestrator/prompts/confirmation.txt` | Classifies replies to a pending item |
+| `CHECKPOINT_DB_FILE` | `checkpoints.db` | Orchestrator checkpointer (paused confirmations only) |
 | `SYNTHESISER_PROMPT_FILE` | `orchestrator/prompts/synthesiser.txt` | Synthesiser merge prompt |
 | `AGENTS_FILE` | `agents.json` | Agent registry |
 | `MCP_FILE` | `mcp.json` | MCP server registry |
-| `SESSION_DB_FILE` | `sessions.db` | SQLite chat history per agent and session (project root); survives restarts |
+| `SESSION_DB_FILE` | `sessions.db` | SQLite session history |
 | `MAX_HISTORY_TURNS` | `10` | Sliding window depth |
 
 ### Clients
@@ -806,9 +727,6 @@ Example `MAIL_ACCOUNTS` value:
 | `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | _(empty)_ | LangSmith API key |
 | `LANGCHAIN_PROJECT` | `uk-agents` | LangSmith project name |
-| `LOG_LEVEL` | `INFO` | Level for `logs/agent.log` (rotating, 5 × 5 MB) |
-
-Routing decisions appear in both the log (`[route] request=…`) and LangSmith (`route → <agent>` runs, `agent:<name>` tags) — see [Routing logs and LangSmith tracing](#routing-logs-and-langsmith-tracing).
 
 ---
 
@@ -960,7 +878,7 @@ class MyAgent(BaseAgent):
 
 Every agent uses `LLM_PROVIDER` / `LLM_MODEL_NAME` from `.env`. To give one agent a different model, add `"llm_model": "claude-haiku-5-5"` (and optionally `"llm_provider"`) to its entry.
 
-The supervisor will automatically route to your agent based on its description. No changes to `core/`, `orchestrator/`, or any client are needed.
+The router will automatically plan your agent in based on its description. No changes to `core/`, `orchestrator/`, or any client are needed.
 
 An agent doesn't have to sit behind the orchestrator. If it needs to run on its own (polling, schedules, webhooks), give it a `main.py` entrypoint like `agents/whatsapp/main.py` or `agents/mails/main.py`, reuse `create_llm()` from `core/`, and run it with `python -m agents.<name>.main`.
 

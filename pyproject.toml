@@ -10,6 +10,7 @@ dependencies = [
     "langchain-core>=1.0.2",
     "langchain-community>=0.4.1",
     "langgraph>=1.0.2",
+    "langgraph-checkpoint-sqlite>=3.0.0",
     "langsmith>=0.4.39",
     "pinecone>=8.1.0",
     "sentence-transformers>=5.3.0",
@@ -44,4 +45,4 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "clients/tests", "agents/conversational/tests", "agents/expenditure/tests", "agents/fbr_tax/tests", "agents/property/tests", "orchestrator/tests"]
+testpaths = ["core/tests", "orchestrator/tests", "clients/tests", "agents"]

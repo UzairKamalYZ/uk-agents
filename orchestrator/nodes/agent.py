@@ -15,6 +15,8 @@ Usage
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from typing import Any
 
@@ -56,23 +58,42 @@ class AgentNode:
     # LangGraph interface — called as agent_node(state)
     # ------------------------------------------------------------------
 
-    def __call__(self, state: GraphState) -> dict[str, Any]:
+    async def __call__(self, state: GraphState) -> dict[str, Any]:
         prompt = state["user_input"]
         session_id = state.get("session_id", "default")
 
+        update: dict[str, Any] = {}
         if self._owner_only and not state.get("is_owner", False):
             logger.warning("[%s] owner-only agent refused non-owner request", self._name)
             response_text = OWNER_ONLY_REFUSAL
         else:
             logger.info("[%s] calling with session=%s", self._name, session_id)
-            response_text = self._agent.ask(prompt, session_id=session_id)
+            response_text = await self._ask(prompt, session_id)
             logger.info("[%s] done, response_len=%d", self._name, len(response_text))
+            if await asyncio.to_thread(self._has_pending, session_id):
+                # The agent asked the user to confirm something — pause after answering
+                update["awaiting"] = self._name
 
         updated_outputs = dict(state.get("agent_outputs", {}))
         updated_outputs[self._name] = response_text
 
         return {
+            **update,
             "agent_outputs": updated_outputs,
             "messages": [AIMessage(content=response_text, name=self._name)],
             "turns": state.get("turns", 0) + 1,
         }
+
+    async def _ask(self, prompt: str, session_id: str) -> str:
+        """Await the agent's aask(); agents without one run their blocking ask() in a thread."""
+        aask = getattr(self._agent, "aask", None)
+        if inspect.iscoroutinefunction(aask):
+            return await aask(prompt, session_id=session_id)
+        return await asyncio.to_thread(self._agent.ask, prompt, session_id=session_id)
+
+    def _has_pending(self, session_id: str) -> bool:
+        try:
+            return self._agent.pending_summary(session_id) is not None
+        except Exception:
+            logger.exception("[%s] pending_summary failed — treating as nothing pending", self._name)
+            return False

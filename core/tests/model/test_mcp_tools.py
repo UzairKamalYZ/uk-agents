@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core.src.model.mcp_tools import _mcp, close_mcp, _load_registry
-from core.src.model.mcp_registry import MCPProcess, MCPRegistry
+from core.src.model.mcp_registry import MCPRegistry
 
 
 class TestLoadRegistry(unittest.TestCase):
@@ -75,7 +75,7 @@ class TestModuleSingleton(unittest.TestCase):
 
     def test_should_use_finance_mcp_command(self):
         server = _mcp._servers["finance"]
-        self.assertIn("@easysolutions906/mcp-finance", server._command)
+        self.assertIn("@easysolutions906/mcp-finance", server.command)
 
     @patch("core.src.model.mcp_tools._mcp")
     def test_close_mcp_delegates_to_registry(self, mock_registry):
@@ -84,143 +84,6 @@ class TestModuleSingleton(unittest.TestCase):
         mock_registry.close.assert_called_once()
 
 
-class TestMCPProcess(unittest.TestCase):
-    """Unit tests for the MCPProcess subprocess manager (no real npx calls)."""
-
-    def setUp(self):
-        self.mcp = MCPProcess("test", ["npx", "--yes", "@acme/test-mcp"])
-
-    def _make_mock_process(self, responses: list[str]):
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = responses
-        mock_proc.stdin.write = MagicMock()
-        mock_proc.stdin.flush = MagicMock()
-        return mock_proc
-
-    @patch("core.src.model.mcp_registry.subprocess.Popen")
-    def test_should_start_subprocess_on_first_call(self, mock_popen):
-        init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-        tool_resp = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "200 USD"}]}})
-        mock_popen.return_value = self._make_mock_process([init_resp, tool_resp])
-
-        result = self.mcp.call_tool("some_tool", {"arg": "value"})
-
-        mock_popen.assert_called_once()
-        self.assertEqual(result, "200 USD")
-
-    @patch("core.src.model.mcp_registry.subprocess.Popen")
-    def test_should_reuse_process_on_second_call(self, mock_popen):
-        init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-        resp1 = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "ok"}]}})
-        resp2 = json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"content": [{"type": "text", "text": "ok2"}]}})
-        mock_popen.return_value = self._make_mock_process([init_resp, resp1, resp2])
-
-        self.mcp.call_tool("tool_a", {})
-        self.mcp.call_tool("tool_b", {})
-
-        self.assertEqual(mock_popen.call_count, 1)
-
-    @patch("core.src.model.mcp_registry.subprocess.Popen")
-    def test_should_join_multiple_text_content_items(self, mock_popen):
-        init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-        tool_resp = json.dumps({
-            "jsonrpc": "2.0", "id": 2,
-            "result": {"content": [
-                {"type": "text", "text": "Line one"},
-                {"type": "text", "text": "Line two"},
-            ]},
-        })
-        mock_popen.return_value = self._make_mock_process([init_resp, tool_resp])
-
-        result = self.mcp.call_tool("tool", {})
-
-        self.assertIn("Line one", result)
-        self.assertIn("Line two", result)
-
-    @patch("core.src.model.mcp_registry.subprocess.Popen")
-    def test_should_return_error_string_when_subprocess_raises(self, mock_popen):
-        mock_popen.side_effect = FileNotFoundError("npx not found")
-
-        result = self.mcp.call_tool("tool", {})
-
-        self.assertIn("unavailable", result.lower())
-        self.assertNotIn("FileNotFoundError", result)
-
-    def test_should_terminate_process_when_close_is_called(self):
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = None
-        self.mcp._process = mock_proc
-
-        self.mcp.close()
-
-        mock_proc.terminate.assert_called_once()
-        self.assertIsNone(self.mcp._process)
-
-    def test_should_not_raise_when_close_called_before_any_tool_call(self):
-        try:
-            self.mcp.close()
-        except Exception as exc:
-            self.fail(f"close() raised unexpectedly: {exc}")
-
-    def test_should_not_raise_when_close_called_twice(self):
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = None
-        self.mcp._process = mock_proc
-
-        self.mcp.close()
-        try:
-            self.mcp.close()
-        except Exception as exc:
-            self.fail(f"Second close() raised unexpectedly: {exc}")
-
-
-class TestMCPRegistry(unittest.TestCase):
-    """Unit tests for MCPRegistry routing and lifecycle."""
-
-    def test_register_returns_self_for_chaining(self):
-        registry = MCPRegistry()
-        result = registry.register("svc", ["cmd"])
-        self.assertIs(result, registry)
-
-    def test_register_stores_server(self):
-        registry = MCPRegistry()
-        registry.register("svc", ["cmd"])
-        self.assertIn("svc", registry._servers)
-        self.assertIsInstance(registry._servers["svc"], MCPProcess)
-
-    @patch.object(MCPProcess, "call_tool", return_value="ok result")
-    def test_call_tool_routes_to_registered_server(self, mock_call):
-        registry = MCPRegistry()
-        registry.register("svc", ["cmd"])
-
-        result = registry.call_tool("some_tool", {"x": 1})
-
-        mock_call.assert_called_once_with("some_tool", {"x": 1})
-        self.assertEqual(result, "ok result")
-
-    @patch.object(MCPProcess, "close")
-    def test_close_all_terminates_every_server(self, mock_close):
-        registry = MCPRegistry()
-        registry.register("a", ["cmd-a"])
-        registry.register("b", ["cmd-b"])
-
-        registry.close_all()
-
-        self.assertEqual(mock_close.call_count, 2)
-
-    @patch.object(MCPProcess, "close")
-    def test_close_is_alias_for_close_all(self, mock_close):
-        registry = MCPRegistry()
-        registry.register("svc", ["cmd"])
-
-        registry.close()
-
-        mock_close.assert_called_once()
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 def test_python_placeholder_resolves_to_sys_executable():
@@ -230,16 +93,13 @@ def test_python_placeholder_resolves_to_sys_executable():
         cfg = Path(d) / "mcp.json"
         cfg.write_text(json.dumps({"servers": [{"name": "x", "command": ["{python}", "-m", "x"]}]}))
         registry = _load_registry(cfg)
-    assert registry._servers["x"]._command == [sys.executable, "-m", "x"]
+    assert registry._servers["x"].command == [sys.executable, "-m", "x"]
 
 
 def test_langchain_tools_unknown_server_returns_empty():
-    registry = MCPRegistry()
-    server = MagicMock()
-    server.list_tools.return_value = [{"name": "t"}]
-    registry._servers["a"] = server
+    registry = MCPRegistry().register_server("a", _server("t"))
     assert registry.langchain_tools(server_name="missing") == []
-    server.list_tools.assert_not_called()
+    assert registry._servers["a"]._client is None
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -254,42 +114,40 @@ def test_python_placeholder_runs_from_project_root():
             {"name": "npx", "command": ["npx", "y"]},
         ]}))
         registry = _load_registry(cfg)
-    assert registry._servers["py"]._cwd == str(_PROJECT_ROOT)
-    assert registry._servers["npx"]._cwd is None
+    assert registry._servers["py"].cwd == str(_PROJECT_ROOT)
+    assert registry._servers["npx"].cwd is None
 
 
-@patch("core.src.model.mcp_registry.subprocess.Popen")
-def test_process_launches_with_cwd(mock_popen):
-    init = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
-    mock_popen.return_value.poll.return_value = None
-    mock_popen.return_value.stdout.readline.side_effect = [init, ""]
-    MCPProcess("x", ["cmd"], cwd="/some/dir")._ensure_running()
-    assert mock_popen.call_args.kwargs["cwd"] == "/some/dir"
-    mock_popen.return_value.stdout.readline.side_effect = [init, ""]
-    MCPProcess("y", ["cmd"])._ensure_running()
-    assert mock_popen.call_args.kwargs["cwd"] is None
+def _server(*tool_names):
+    from mcp.server.mcpserver import MCPServer
+    server = MCPServer("s")
+    for name in tool_names:
+        server.tool(name=name, description=name)(lambda: name)
+    return server
 
 
-def _registry_with(owner_only_name: str) -> tuple[MCPRegistry, MagicMock, MagicMock]:
+def _registry_with(owner_only_name: str) -> MCPRegistry:
     registry = MCPRegistry()
-    public, private = MagicMock(), MagicMock()
-    public.list_tools.return_value = [{"name": "pub_tool"}]
-    private.list_tools.return_value = [{"name": "priv_tool"}]
-    with patch("core.src.model.mcp_registry.MCPProcess", side_effect=[public, private]):
-        registry.register("public", ["a"])
-        registry.register(owner_only_name, ["b"], owner_only=True)
-    return registry, public, private
+    registry.register_server("public", _server("pub_tool"))
+    registry.register_server(owner_only_name, _server("priv_tool"), owner_only=True)
+    return registry
 
 
 def test_default_tool_set_excludes_owner_only_servers():
-    registry, _public, private = _registry_with("expenses")
-    assert [t.name for t in registry.langchain_tools()] == ["pub_tool"]
-    private.list_tools.assert_not_called()
+    registry = _registry_with("expenses")
+    try:
+        assert [t.name for t in registry.langchain_tools()] == ["pub_tool"]
+        assert registry._servers["expenses"]._client is None  # never even connected
+    finally:
+        registry.close()
 
 
 def test_owner_only_server_still_available_by_name():
-    registry, _public, _private = _registry_with("expenses")
-    assert [t.name for t in registry.langchain_tools(server_name="expenses")] == ["priv_tool"]
+    registry = _registry_with("expenses")
+    try:
+        assert [t.name for t in registry.langchain_tools(server_name="expenses")] == ["priv_tool"]
+    finally:
+        registry.close()
 
 
 def test_mcp_json_owner_only_flag_is_recorded():
@@ -315,77 +173,156 @@ def test_optional_anyof_param_keeps_its_type():
 
 
 # ---------------------------------------------------------------------------
-# Real stdio subprocesses (local Python scripts — no network): timeouts,
-# handshake, notifications interleaved with replies
+# Official SDK client against real MCP servers (in-process and stdio subprocess)
 # ---------------------------------------------------------------------------
 
-_FAKE_SERVER = """
-import json, sys, time
-for line in sys.stdin:
-    msg = json.loads(line)
-    method = msg.get("method")
-    if method == "initialize":
-        reply = {"protocolVersion": msg["params"]["protocolVersion"]}
-    elif method == "notifications/initialized":
-        open(sys.argv[1], "w").write("initialized")
-        continue
-    elif msg["params"]["name"] == "hang":
-        time.sleep(60)
-        continue
-    elif msg["params"]["name"] == "broken":
-        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -1, "message": "bad args"}}), flush=True)
-        continue
-    else:
-        print(json.dumps({"jsonrpc": "2.0", "method": "notifications/message", "params": {}}), flush=True)
-        print("not json at all", flush=True)
-        reply = {"content": [{"type": "text", "text": "pong"}]}
-    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": reply}), flush=True)
-"""
+import asyncio
+import os
+
+import pytest
+
+from core.tests.model import mcp_test_server
+
+_SERVER_SCRIPT = str(Path(mcp_test_server.__file__))
 
 
-def _fake_server(tmp_path, timeout=1.0):
-    script = tmp_path / "server.py"
-    script.write_text(_FAKE_SERVER)
-    marker = tmp_path / "marker"
-    return MCPProcess("fake", [sys.executable, str(script), str(marker)], timeout=timeout), marker
+@pytest.fixture
+def inproc():
+    registry = MCPRegistry().register_server("t", mcp_test_server.server, timeout=1)
+    yield registry
+    registry.close()
 
 
-def test_real_server_handshake_and_skips_notifications(tmp_path):
-    proc, marker = _fake_server(tmp_path)
+@pytest.fixture
+def stdio(tmp_path):
+    registry = MCPRegistry().register("t", [sys.executable, _SERVER_SCRIPT], cwd=str(tmp_path), timeout=1)
+    yield registry
+    registry.close()
+
+
+def _tool(registry, name):
+    return next(t for t in registry.langchain_tools("t") if t.name == name)
+
+
+def test_tools_are_generated_from_the_server_schema(inproc):
+    echo = _tool(inproc, "echo")
+    assert echo.description == "Echo the text back."
+    assert echo.invoke({"text": "hi", "times": 2}) == "hi hi"
+    assert echo.invoke({"text": "hi"}) == "hi"  # optional param omitted
+
+
+def test_tools_support_async_invoke(inproc):
+    assert asyncio.run(_tool(inproc, "echo").ainvoke({"text": "async"})) == "async"
+
+
+def test_undeclared_arguments_are_dropped(inproc):
+    echo = _tool(inproc, "echo")
+    assert echo.func(text="hi", function="legacy-extra") == "hi"
+
+
+def test_tool_error_is_reported_to_the_llm(inproc):
+    assert _tool(inproc, "boom").invoke({}).startswith("Tool 'boom' failed:")
+
+
+def test_call_tool_routes_by_tool_name(inproc):
+    assert inproc.call_tool("echo", {"text": "routed"}) == "routed"
+    assert inproc.call_tool("missing", {}) == "Tool 'missing' is currently unavailable."
+
+
+def test_timeout_reconnects_on_next_call(inproc):
+    hang = _tool(inproc, "hang")
+    assert hang.invoke({"seconds": 30}) == "Tool 'hang' timed out — please try again."
+    assert _tool(inproc, "echo").invoke({"text": "back"}) == "back"
+
+
+def test_stdio_server_runs_in_cwd_and_is_reused(stdio, tmp_path):
+    assert os.path.realpath(_tool(stdio, "cwd").invoke({})) == os.path.realpath(tmp_path)
+    pid = _tool(stdio, "pid")
+    assert pid.invoke({}) == pid.invoke({})  # one persistent subprocess
+
+
+def test_stdio_hung_server_is_restarted(stdio):
+    first = _tool(stdio, "pid").invoke({})
+    assert "timed out" in _tool(stdio, "hang").invoke({"seconds": 30})
+    second = _tool(stdio, "pid").invoke({})
+    assert second != first  # fresh subprocess
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(first), 0)  # the hung one was stopped
+
+
+def test_stdio_close_stops_the_subprocess(stdio):
+    pid = int(_tool(stdio, "pid").invoke({}))
+    stdio.close()
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_server_that_never_starts_does_not_hang():
+    registry = MCPRegistry().register("slow", [sys.executable, _SERVER_SCRIPT, "--slow-start"], start_timeout=0.5)
     try:
-        assert proc.call_tool("ping", {}) == "pong"
-        assert marker.read_text() == "initialized"
+        assert registry.langchain_tools("slow") == []  # logged, not raised
+        assert registry.call_tool("echo", {"text": "x"}) == "Tool 'echo' is currently unavailable."
     finally:
-        proc.close()
+        registry.close()
 
 
-def test_hung_server_times_out_then_restarts(tmp_path):
-    proc, _ = _fake_server(tmp_path, timeout=0.5)
+def test_missing_command_is_unavailable_not_fatal():
+    registry = MCPRegistry().register("nope", ["definitely-not-a-real-command-xyz"])
     try:
-        assert proc.call_tool("ping", {}) == "pong"
-        first = proc._process
-        assert "timed out" in proc.call_tool("hang", {})
-        assert first.poll() is not None or proc._process is None  # hung server was killed
-        assert proc.call_tool("ping", {}) == "pong"  # fresh server
-        assert proc._process is not first
+        assert registry.langchain_tools("nope") == []
     finally:
-        proc.close()
+        registry.close()
 
 
-def test_json_rpc_error_is_reported_to_the_llm(tmp_path):
-    proc, _ = _fake_server(tmp_path)
+def test_mcp_json_timeout_is_applied(tmp_path):
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({"servers": [
+        {"name": "a", "command": ["npx", "a"], "timeout": 5},
+        {"name": "b", "command": ["npx", "b"]},
+        {"name": "h", "url": "https://example.com/mcp", "timeout": 7},
+    ]}))
+    registry = _load_registry(cfg)
+    assert registry._servers["a"].timeout == 5
+    assert registry._servers["b"].timeout == 60
+    assert registry._servers["h"].timeout == 7
+
+
+def test_http_query_params_are_appended_to_url():
+    from core.src.model.mcp_registry import _http_target
+    assert _http_target("https://x/mcp", {"apikey": "k"}, None)() == "https://x/mcp?apikey=k"
+    assert _http_target("https://x/mcp?a=1", {"apikey": "k"}, None)() == "https://x/mcp?a=1&apikey=k"
+
+
+def test_third_party_servers_get_only_listed_env_vars(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECRET_KEY", "s3cret")
+    monkeypatch.setenv("NEEDED_KEY", "ok")
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({"servers": [
+        {"name": "npx", "command": ["npx", "a"], "env": ["NEEDED_KEY", "UNSET_KEY"]},
+        {"name": "own", "command": ["{python}", "-m", "x"]},
+    ]}))
+    with patch.object(MCPRegistry, "register", autospec=True, side_effect=lambda self, *a, **k: self) as reg:
+        _load_registry(cfg)
+    envs = {c.args[1]: c.kwargs["env"] for c in reg.call_args_list}
+    assert envs["npx"] == {"NEEDED_KEY": "ok"}
+    assert envs["own"]["SECRET_KEY"] == "s3cret"
+
+
+def test_stdio_subprocess_does_not_inherit_unlisted_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("SECRET_KEY", "s3cret")
+    script = tmp_path / "envserver.py"
+    script.write_text(
+        "import os\n"
+        "from mcp.server.mcpserver import MCPServer\n"
+        "s = MCPServer('e')\n"
+        "@s.tool(name='getenv', description='env var')\n"
+        "def getenv(key: str) -> str:\n"
+        "    return os.environ.get(key, '<unset>')\n"
+        "s.run()\n"
+    )
+    registry = MCPRegistry().register("e", [sys.executable, str(script)], env={"GIVEN": "yes"})
     try:
-        assert proc.call_tool("broken", {}) == "Tool 'broken' failed: bad args"
+        assert registry.call_tool("getenv", {"key": "SECRET_KEY"}) == "<unset>"
+        assert registry.call_tool("getenv", {"key": "GIVEN"}) == "yes"
     finally:
-        proc.close()
-
-
-def test_server_that_never_starts_does_not_hang(tmp_path):
-    script = tmp_path / "silent.py"
-    script.write_text("import time; time.sleep(60)")
-    proc = MCPProcess("silent", [sys.executable, str(script)], start_timeout=0.5)
-    try:
-        assert "unavailable" in proc.call_tool("x", {})
-        assert proc._process is None
-    finally:
-        proc.close()
+        registry.close()

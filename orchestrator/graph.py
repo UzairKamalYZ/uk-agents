@@ -8,40 +8,40 @@ Every user message travels through this sequence:
   START
     │
     ▼
-  normaliser          ← Step 0: LLM cleans the message; resolves any pending item
-    │
-    ├──► synthesiser            (pending confirmed / cancelled — answer is ready)
-    ├──► <agent>                (pending corrected — "direct", skips supervisor routing)
-    │
+  router              ← Step 1: ONE LLM call cleans the message and plans the
+    │                   agents to run, in order (structured output)
+    ├──► agent A ──► agent B ...  ← Step 2: the plan runs; no LLM decides between
+    │                               agents (turns += 1 per agent)
     ▼
-  supervisor          ← Step 1: LLM decides which agent to call next (or FINISH)
+  synthesiser         ← Step 3: one agent → its answer as is; several → LLM merge
     │
-    ├──► conversational_agent ──┐
-    ├──► property_agent        ─┤  ← Step 2: specialist agent runs, turns += 1
-    ├──► finance_agent         ─┘
-    │         │
-    │         └──► supervisor   (loop back — supervisor reassesses after each agent)
+    ├──► END
     │
-    └──► synthesiser            ← Step 3: LLM combines all outputs into one answer
-          │
-          ▼
-         END
+    └──► confirmation ← Step 4: an agent left a pending item → interrupt()
+           │              (paused; the user's next message resumes here)
+           ├──► synthesiser   (confirmed / cancelled / re-asked)
+           ├──► <agent>       (correction — re-checked by that agent)
+           └──► router        (unrelated — handled as a fresh turn)
 
-NORMALISER
-----------
-The supervisor sees no chat history, so a bare "yes" to "save this expense?"
-cannot be routed by it.  The normaliser asks each agent for a pending item
-(BaseAgent.pending_summary) and classifies the message against it in the same
-LLM call that cleans the text.  On a correction it sets state["direct"], and
-the supervisor router then sends the flow straight to the synthesiser once
-that agent has answered.
+LLM CALLS PER MESSAGE
+---------------------
+Orchestration costs one call (router) for a single-agent message, plus one
+synthesiser call when several agents answered — the agents' own calls aside.
+
+CONFIRMATIONS (human-in-the-loop)
+---------------------------------
+When an agent leaves a pending item (BaseAgent.pending_summary), its node sets
+state["awaiting"].  After the synthesiser has shown the agent's question, the
+confirmation node calls interrupt(): the run stops and the checkpointer saves
+it under thread_id = session_id.  ask()/stream_tokens() see the paused thread
+on the next message and resume it with Command(resume=<message>) instead of
+starting a new run.  Threads are deleted once a run finishes without pausing,
+so the checkpoint database only ever holds paused conversations.
 
 TURN CAP
 --------
-The router enforces MAX_AGENT_TURNS (defined in state.py).  Once that many
-agent calls have been made in a single user turn, the router bypasses the
-supervisor and sends the flow straight to the synthesiser regardless of what
-the supervisor LLM said.  This prevents runaway loops.
+_route_plan enforces MAX_AGENT_TURNS (defined in state.py): once that many
+agent calls have run in one turn the flow goes to the synthesiser.
 
 ADDING A NEW AGENT
 ------------------
@@ -51,13 +51,24 @@ it up automatically on the next startup.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import weakref
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessageChunk
-from langgraph.graph import END, START, StateGraph
+import aiosqlite
 
+from langchain_core.messages import AIMessageChunk, RemoveMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langgraph.types import Command
+
+from core.src.aio import BackgroundLoop
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
 from core.src.utils import load_prompt
@@ -71,94 +82,46 @@ if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
 from .agent_registry import load_agents
-from .nodes import AgentNode, NormaliserNode, SupervisorNode, SynthesiserNode
+from .nodes import AgentNode, ConfirmationNode, RouterNode, SynthesiserNode
 from .state import MAX_AGENT_TURNS, GraphState
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Router — conditional edge out of the normaliser node
+# Routers — conditional edges out of the synthesiser and confirmation nodes
 # ---------------------------------------------------------------------------
 
-def _make_normaliser_router(agent_names: set[str]):
-    """
-    Returns the routing function used as a conditional edge from the normaliser.
+def _route_after_synthesiser(state: GraphState) -> str:
+    """Pause for a confirmation when an agent left a pending item; else finish."""
+    return "confirmation" if state.get("awaiting") else END
 
-      - state["next"] is a known agent name  →  that agent (pending correction)
-      - state["next"] == "synthesiser"       →  synthesiser (confirm / cancel)
-      - anything else                        →  "supervisor" (normal path)
-    """
+
+def _make_confirmation_router(agent_names: set[str]):
+    """Follow the confirmation node's state["next"]; anything unknown ends the run."""
+    targets = agent_names | {"synthesiser", "router"}
 
     def _route(state: GraphState) -> str:
-        next_node = state.get("next", "")
-        if next_node in agent_names or next_node == "synthesiser":
-            logger.info("[normaliser-router] → %r (skipping supervisor)", next_node)
-            return next_node
-        return "supervisor"
+        next_node = state.get("next", END)
+        return next_node if next_node in targets else END
 
     return _route
 
 
 # ---------------------------------------------------------------------------
-# Router — conditional edge out of the supervisor node
+# Plan follower — conditional edge out of the router and every agent
 # ---------------------------------------------------------------------------
 
-def _make_router(agent_names: set[str]):
-    """
-    Returns the routing function used as a conditional edge from the supervisor.
-
-    Called by LangGraph after every supervisor_node execution.  It reads the
-    current state and returns the NAME of the next node to visit.
-
-    Decision logic (in priority order):
-      1. If turns >= MAX_AGENT_TURNS  →  force "synthesiser" (loop guard).
-      2. If state["direct"] and an agent has answered  →  "synthesiser"
-         (the normaliser already chose the agent; nothing left to route).
-      3. If state["next"] is a known agent name  →  route to that agent.
-      4. Otherwise (supervisor said FINISH or returned garbage)  →  "synthesiser".
-
-    Parameters
-    ----------
-    agent_names : set of enabled agent names loaded from agents.json.
-                  Used to validate the supervisor's routing decision.
-    """
-
-    def _route(state: GraphState) -> str:
-        # --- Guard: too many turns → skip supervisor, go straight to synthesis ---
-        if state.get("turns", 0) >= MAX_AGENT_TURNS:
-            logger.warning(
-                "[router] turn cap reached (%d/%d) — forcing synthesiser",
-                state["turns"],
-                MAX_AGENT_TURNS,
-            )
-            return "synthesiser"
-
-        # --- Direct path: normaliser picked the agent, which has now answered ---
-        if state.get("direct") and state.get("agent_outputs"):
-            logger.info("[router] direct turn complete → synthesiser")
-            return "synthesiser"
-
-        # --- Normal path: honour the supervisor's routing decision ---
-        next_node = state.get("next", "FINISH")
-        already_ran = set(state.get("agent_outputs", {}).keys())
-
-        # Block re-routing to an agent that already produced output this turn.
-        # Prevents smaller models from looping on the same agent indefinitely.
-        if next_node in agent_names and next_node in already_ran:
-            logger.warning(
-                "[router] turns=%d — supervisor re-routed to %r which already ran; forcing synthesiser",
-                state.get("turns", 0), next_node,
-            )
-            return "synthesiser"
-
-        logger.info("[router] turns=%d → routing to %r", state.get("turns", 0), next_node)
-        if next_node in agent_names:
-            return next_node
-
+def _route_plan(state: GraphState) -> str:
+    """The first planned agent that hasn't answered yet, else the synthesiser."""
+    if state.get("turns", 0) >= MAX_AGENT_TURNS:
+        logger.warning("[plan] turn cap reached (%d/%d) — synthesiser", state["turns"], MAX_AGENT_TURNS)
         return "synthesiser"
-
-    return _route
+    done = state.get("agent_outputs", {})
+    for name in state.get("plan", []):
+        if name not in done:
+            return name
+    return "synthesiser"
 
 
 # ---------------------------------------------------------------------------
@@ -167,26 +130,27 @@ def _make_router(agent_names: set[str]):
 
 class MultiAgentGraph:
     """
-    Builds, wires, and compiles the full LangGraph supervisor multi-agent graph.
+    Builds, wires, and compiles the full LangGraph router multi-agent graph.
 
     Construction happens once at startup (__init__).  After that, stream() and
     ask() can be called repeatedly without rebuilding the graph.
 
     Build order inside __init__
     ---------------------------
-    1. Create the shared LLM (used by normaliser, supervisor and synthesiser).
+    1. Create the shared LLM (router, synthesiser, confirmation).
     2. Load enabled agents from agents.json via agent_registry.
-    3. Build the supervisor prompt with the live agent list injected;
-       load the normaliser and synthesiser prompts.
+    3. Build the agent list for the router prompt; load the router,
+       synthesiser and confirmation prompts.
     4. Create node functions via factories in nodes.py.
     5. Wire nodes and edges into a StateGraph.
-    6. Compile the graph.
+    6. Compile the graph with a checkpointer (SQLite at CHECKPOINT_DB_FILE
+       unless one is passed in), which is what lets a run pause and resume.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, checkpointer: BaseCheckpointSaver | None = None) -> None:
 
         # -----------------------------------------------------------------
-        # 1. Shared LLM — same model drives normaliser, supervisor and synthesiser
+        # 1. Shared LLM — same model drives router, synthesiser and confirmation
         # -----------------------------------------------------------------
         llm = create_llm(Config.LLM_PROVIDER, Config.LLM_MODEL_NAME)
 
@@ -198,27 +162,25 @@ class MultiAgentGraph:
         agent_names = {a.name for a in agents}   # used by router + route_map
 
         # -----------------------------------------------------------------
-        # 3. Build the agent description block injected into the supervisor
+        # 3. Build the agent description block injected into the router
         #    prompt so the LLM knows which agents exist and what they do
         # -----------------------------------------------------------------
         agents_block = "\n".join(
             f"- {a.name}: {a.description}" for a in agents
         )
-        supervisor_prompt = (
-            load_prompt(Config.SUPERVISOR_PROMPT_FILE)
-            .replace("{agents}", agents_block)   # fills the {agents} placeholder
-        )
+        router_prompt = load_prompt(Config.ROUTER_PROMPT_FILE)
         synthesiser_prompt = load_prompt(Config.SYNTHESISER_PROMPT_FILE)
-        normaliser_prompt = load_prompt(Config.NORMALISER_PROMPT_FILE)
+        confirmation_prompt = load_prompt(Config.CONFIRMATION_PROMPT_FILE)
 
         # -----------------------------------------------------------------
         # 4. Instantiate node objects
         #    Each class closes over its dependencies (llm, prompt, agent
         #    instance) and is callable as a plain function(state) -> dict.
         # -----------------------------------------------------------------
-        normaliser_node = NormaliserNode(llm, normaliser_prompt, agents)
-        supervisor_node = SupervisorNode(llm, supervisor_prompt, agent_names)
+        router_node = RouterNode(llm, router_prompt, agents_block, agent_names)
         synthesiser_node = SynthesiserNode(llm, synthesiser_prompt)
+        confirmation_node = ConfirmationNode(llm, confirmation_prompt, agents)
+        self._agents = {a.name: a for a in agents}
         # Agent nodes are created in the loop below (one per enabled agent)
 
         # -----------------------------------------------------------------
@@ -227,40 +189,54 @@ class MultiAgentGraph:
         builder = StateGraph(GraphState)
 
         # Fixed nodes — always present regardless of agents.json contents
-        builder.add_node("normaliser", normaliser_node)
-        builder.add_node("supervisor", supervisor_node)
+        builder.add_node("router", router_node)
         builder.add_node("synthesiser", synthesiser_node)
+        builder.add_node("confirmation", confirmation_node)
 
-        # Dynamic agent nodes — one per enabled entry in agents.json
+        # Entry point: a fresh turn always starts at the router
+        builder.add_edge(START, "router")
+
+        # Conditional edges — route_map tells LangGraph every possible return
+        # value of a routing function and which node name it maps to.
+        route_map = {name: name for name in agent_names}
+        route_map["synthesiser"] = "synthesiser"
+        builder.add_conditional_edges("router", _route_plan, route_map)
+
+        # Dynamic agent nodes — one per enabled entry in agents.json; after each
+        # one the plan decides what runs next (no LLM call in between)
         for agent in agents:
             node_fn = AgentNode(agent.name, agent.instance, owner_only=agent.owner_only)
             builder.add_node(agent.name, node_fn)
-            # Every agent loops back to the supervisor after it finishes
-            builder.add_edge(agent.name, "supervisor")
+            builder.add_conditional_edges(agent.name, _route_plan, route_map)
 
-        # Entry point: graph always starts at the normaliser
-        builder.add_edge(START, "normaliser")
-
-        # Conditional edges — router functions decide the target.
-        # route_map tells LangGraph every possible return value of _route()
-        # and which node name it maps to.
-        route_map = {name: name for name in agent_names}
-        route_map["synthesiser"] = "synthesiser"
+        # After answering: finish, or pause for a pending item's confirmation
         builder.add_conditional_edges(
-            "normaliser",
-            _make_normaliser_router(agent_names),
-            {**route_map, "supervisor": "supervisor"},
+            "synthesiser", _route_after_synthesiser, {"confirmation": "confirmation", END: END}
         )
-        builder.add_conditional_edges("supervisor", _make_router(agent_names), route_map)
-
-        # Synthesiser is terminal — no further routing after it finishes
-        builder.add_edge("synthesiser", END)
+        builder.add_conditional_edges(
+            "confirmation",
+            _make_confirmation_router(agent_names),
+            {**route_map, "router": "router", END: END},
+        )
 
         # -----------------------------------------------------------------
         # 6. Compile — LangGraph validates the graph topology here
         # -----------------------------------------------------------------
-        self._graph = builder.compile()
+        # The graph runs on its own event loop: the aiosqlite checkpointer must
+        # stay on one loop, and sync + async callers can then both use it.
+        self._runtime = BackgroundLoop("orchestrator-loop")
+        self._owns_checkpointer = checkpointer is None
+        self._checkpointer = checkpointer or self._runtime.run(self._open_sqlite_checkpointer())
+        self._graph = builder.compile(checkpointer=self._checkpointer)
+        # One run at a time per session (created and used only on the runtime loop)
+        self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         logger.info("[MultiAgentGraph] compiled with agents: %s", sorted(agent_names))
+
+    @staticmethod
+    async def _open_sqlite_checkpointer() -> AsyncSqliteSaver:
+        path = Path(Config.CHECKPOINT_DB_FILE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return AsyncSqliteSaver(await aiosqlite.connect(path))
 
     # ------------------------------------------------------------------
     # Public interface
@@ -272,69 +248,153 @@ class MultiAgentGraph:
         return {
             "user_input": user_input,
             "session_id": session_id,
-            "messages": [],
+            # Clears messages left by an earlier run on this thread (add_messages reducer)
+            "messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)],
             "agent_outputs": {},
+            "plan": [],
             "next": "",
             "turns": 0,
             "is_owner": is_owner,
             "raw_input": user_input,
-            "direct": False,
+            "awaiting": None,
         }
 
-    def stream(self, user_input: str, session_id: str = "default", *, is_owner: bool = False):
+    @staticmethod
+    def _config(thread_id: str) -> dict:
+        return {"configurable": {"thread_id": thread_id}}
+
+    # ------------------------------------------------------------------
+    # Run lifecycle (coroutines — always on the runtime loop)
+    # ------------------------------------------------------------------
+
+    def _session_lock(self, session_id: str) -> asyncio.Lock:
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            lock = self._session_locks[session_id] = asyncio.Lock()
+        return lock
+
+    async def _pending_interrupt(self, thread_id: str) -> dict | None:
+        """The payload of the interrupt this thread is paused on, if any."""
+        interrupts = (await self._graph.aget_state(self._config(thread_id))).interrupts
+        return interrupts[0].value if interrupts else None
+
+    async def _start(self, user_input: str, session_id: str, is_owner: bool) -> tuple[Any, dict]:
+        """(graph input, config) for this message: resume a paused thread, or start fresh."""
+        paused = await self._pending_interrupt(session_id)
+        if paused is not None and not await asyncio.to_thread(self._still_pending, paused.get("agent"), session_id):
+            # Resolved some other way while paused — this message starts a new turn
+            logger.info("[MultiAgentGraph] %s: pending item on %s is gone — fresh turn",
+                        session_id, paused.get("agent"))
+            paused = None
+        if paused is not None:
+            if paused.get("owner_only") and not is_owner:
+                # Someone else in the chat can't answer the owner's question — run their
+                # message on a side thread and leave the owner's confirmation paused.
+                logger.info("[MultiAgentGraph] %s paused on owner-only %s — non-owner turn on side thread",
+                            session_id, paused.get("agent"))
+                thread_id = f"{session_id}#guest"
+                await self._checkpointer.adelete_thread(thread_id)
+                return self._initial_state(user_input, session_id, is_owner), self._config(thread_id)
+            logger.info("[MultiAgentGraph] resuming %s (pending on %s)", session_id, paused.get("agent"))
+            return Command(resume=user_input, update={"is_owner": is_owner}), self._config(session_id)
+        # Nothing paused: drop any leftovers from a run that crashed mid-way
+        await self._checkpointer.adelete_thread(session_id)
+        return self._initial_state(user_input, session_id, is_owner), self._config(session_id)
+
+    def _still_pending(self, agent_name: str | None, session_id: str) -> bool:
+        entry = self._agents.get(agent_name)
+        if entry is None:
+            return False
+        try:
+            return entry.instance.pending_summary(session_id) is not None
+        except Exception:
+            logger.exception("[MultiAgentGraph] pending_summary failed for %s — not resuming", agent_name)
+            return False
+
+    async def _finish(self, config: dict) -> None:
+        """Keep a thread only while it is paused for a confirmation."""
+        thread_id = config["configurable"]["thread_id"]
+        if await self._pending_interrupt(thread_id) is None:
+            await self._checkpointer.adelete_thread(thread_id)
+
+    async def _run_ask(self, user_input: str, session_id: str, is_owner: bool) -> str:
         """
-        Run the full pipeline and yield LangGraph update-event dicts.
+        Run the pipeline (or resume it) and return the synthesiser's answer.
 
-        Each yielded event is {"node_name": {state_delta}} — one dict per
-        node execution.  Used internally by ask() to collect the final state.
+        The synthesiser stores its answer in agent_outputs["synthesiser"]; the
+        last one written during this run is the reply (a run that pauses for
+        a confirmation has already answered with the agent's question).
         """
-        initial_state = self._initial_state(user_input, session_id, is_owner)
-        yield from self._graph.stream(initial_state, stream_mode="updates")
-
-    def stream_tokens(self, user_input: str, session_id: str = "default", *, is_owner: bool = False):
-        """
-        Yield text tokens from the synthesiser LLM as they are generated.
-        """
-        initial_state = self._initial_state(user_input, session_id, is_owner)
-
-        # stream_mode="messages" yields (message, metadata) tuples as they happen:
-        # AIMessageChunk tokens while the synthesiser LLM writes, plus the complete
-        # AIMessage each node returns.  metadata["langgraph_node"] names the node.
-        streamed = False
-        for chunk, metadata in self._graph.stream(
-            initial_state, stream_mode="messages"
-        ):
-            if metadata.get("langgraph_node") != "synthesiser":
-                continue
-            # The final message repeats the streamed tokens — only use it when
-            # nothing was streamed (single-agent passthrough makes no LLM call).
-            if isinstance(chunk, AIMessageChunk):
-                streamed = True
-            elif streamed:
-                continue
-            # .text skips thinking / tool-call blocks (empty for those chunks)
-            if chunk.text:
-                yield chunk.text
-
-    def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
-        """
-        Blocking call — runs the full pipeline and returns the synthesiser's answer.
-
-        Internally calls stream() and collects all events.  The synthesiser
-        stores its answer in agent_outputs["synthesiser"], which this method
-        extracts and returns as a plain string.
-        """
-        final_state: dict[str, Any] = {}
-        for event in self.stream(user_input, session_id=session_id, is_owner=is_owner):
-            final_state.update(event)   # accumulate all node updates
-
-        # Pull agent_outputs out of each node's update dict and merge them
-        outputs = {}
-        for node_update in final_state.values():
-            if isinstance(node_update, dict):
-                outputs.update(node_update.get("agent_outputs", {}))
-
-        answer = outputs.get("synthesiser", "")
+        async with self._session_lock(session_id):
+            graph_input, config = await self._start(user_input, session_id, is_owner)
+            answer = ""
+            try:
+                async for event in self._graph.astream(graph_input, config, stream_mode="updates"):
+                    update = event.get("synthesiser")
+                    if isinstance(update, dict):
+                        answer = update.get("agent_outputs", {}).get("synthesiser", answer)
+            finally:
+                await self._finish(config)
         if not answer:
             logger.warning("[MultiAgentGraph] no synthesiser output in final state")
         return answer
+
+    async def _run_tokens(self, user_input: str, session_id: str, is_owner: bool) -> AsyncIterator[str]:
+        """Yield text tokens from the synthesiser LLM as they are generated."""
+        async with self._session_lock(session_id):
+            graph_input, config = await self._start(user_input, session_id, is_owner)
+            # stream_mode="messages" yields (message, metadata) tuples as they happen:
+            # AIMessageChunk tokens while the synthesiser LLM writes, plus the complete
+            # AIMessage each node returns.  metadata["langgraph_node"] names the node.
+            # The synthesiser can run more than once per call (e.g. confirm, then the
+            # next question), so "already streamed" is tracked per synthesiser run.
+            streamed_runs: set[str] = set()
+            try:
+                async for chunk, metadata in self._graph.astream(graph_input, config, stream_mode="messages"):
+                    if metadata.get("langgraph_node") != "synthesiser":
+                        continue
+                    run = metadata.get("langgraph_checkpoint_ns", "")
+                    # The final message repeats the streamed tokens — only use it when
+                    # nothing was streamed (single-agent passthrough makes no LLM call).
+                    if isinstance(chunk, AIMessageChunk):
+                        streamed_runs.add(run)
+                    elif run in streamed_runs:
+                        continue
+                    # .text skips thinking / tool-call blocks (empty for those chunks)
+                    if chunk.text:
+                        yield chunk.text
+            finally:
+                await self._finish(config)
+
+    # ------------------------------------------------------------------
+    # Public interface — async (REST, Telegram) and sync (cron, scripts)
+    # ------------------------------------------------------------------
+
+    async def aask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
+        """Answer one message. Messages on the same session are handled one at a time."""
+        return await self._runtime.arun(self._run_ask(user_input, session_id, is_owner))
+
+    async def astream_tokens(
+        self, user_input: str, session_id: str = "default", *, is_owner: bool = False
+    ) -> AsyncIterator[str]:
+        """Async generator of answer tokens as the synthesiser writes them."""
+        async for token in self._runtime.aiterate(self._run_tokens(user_input, session_id, is_owner)):
+            yield token
+
+    def ask(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> str:
+        """Blocking aask() for sync callers."""
+        return self._runtime.run(self._run_ask(user_input, session_id, is_owner))
+
+    def stream_tokens(self, user_input: str, session_id: str = "default", *, is_owner: bool = False) -> Iterator[str]:
+        """Blocking astream_tokens() for sync callers."""
+        yield from self._runtime.iterate(self._run_tokens(user_input, session_id, is_owner))
+
+    def pending_interrupt(self, session_id: str) -> dict | None:
+        """What this session is paused on (agent, summary, owner_only), or None."""
+        return self._runtime.run(self._pending_interrupt(session_id))
+
+    def close(self) -> None:
+        """Close the checkpointer connection (if this graph opened it) and stop the loop."""
+        if self._owns_checkpointer:
+            self._runtime.run(self._checkpointer.conn.close())
+        self._runtime.stop()
