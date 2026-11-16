@@ -14,6 +14,11 @@ def _project_path(env_var: str, default: str) -> str:
     return str(_PROJECT_ROOT / (os.getenv(env_var) or default))
 
 
+def _data_path(env_var: str, default: str | Path) -> str:
+    """Like _project_path, but "~" is expanded and the default may be an absolute path."""
+    return str(_PROJECT_ROOT / Path(os.getenv(env_var) or default).expanduser())
+
+
 def _user_data_dir() -> Path:
     """Per-user data directory for uk-agents, outside the project (survives re-clones)."""
     if os.name == "nt":
@@ -51,37 +56,40 @@ class Config:
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "uk-agents")
     # API security — leave empty to disable auth
     API_KEY = os.getenv("API_KEY", "")
+    # Where the Streamlit UI finds the REST API
+    REST_API_URL = os.getenv("REST_API_URL", "http://localhost:8000")
 
     # SQLite file for persistent session history (relative → from the project root)
     SESSION_DB_FILE = _project_path("SESSION_DB_FILE", "sessions.db")
     # Prompt the scheduled cron client sends on every run
     CRON_SEARCH_PROMPT = os.getenv("CRON_SEARCH_PROMPT", "Find 2-bedroom apartments in Poland under 1000")
     # SQLite file where the orchestrator keeps conversations paused for a confirmation
-    CHECKPOINT_DB_FILE = str(_PROJECT_ROOT / os.getenv("CHECKPOINT_DB_FILE", "checkpoints.db"))
+    CHECKPOINT_DB_FILE = _project_path("CHECKPOINT_DB_FILE", "checkpoints.db")
     # Selenium scraping browser connection string
     SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")
     # Number of listings to retrieve per RAG search
     RAG_K = int(os.getenv("RAG_K", "5"))
-    MAX_HISTORY_TURNS= os.getenv("MAX_HISTORY_TURNS", 10)
+    # Turns of an agent's own chat history sent with each request
+    MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "10"))
     # Orchestrator prompt files
     ROUTER_PROMPT_FILE = _project_path("ROUTER_PROMPT_FILE", "orchestrator/prompts/router.txt")
     SYNTHESISER_PROMPT_FILE = _project_path("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
     CONFIRMATION_PROMPT_FILE = _project_path("CONFIRMATION_PROMPT_FILE", "orchestrator/prompts/confirmation.txt")
-    # Registry config files — resolved to absolute paths from the project root
-    AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
+    # Registries: which agents exist, which MCP servers they can use
+    AGENTS_FILE = _project_path("AGENTS_FILE", "agents.json")
+    MCP_FILE = _project_path("MCP_FILE", "mcp.json")
     # Expense ledger + input log — kept outside the project in the user data dir;
     # a relative EXPENSES_DIR is resolved from the project root, "~" is expanded
-    EXPENSES_DIR = str(_PROJECT_ROOT / Path(os.getenv("EXPENSES_DIR") or _user_data_dir() / "expenses").expanduser())
+    EXPENSES_DIR = _data_path("EXPENSES_DIR", _user_data_dir() / "expenses")
     # FBR (Pakistan) tax filing — the project holding the fbr-iris-filing skill and its snapshots/;
     # a relative path is resolved from the project root, "~" is expanded
-    FBR_TAX_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DIR") or "~/work/fbr-tax-filing").expanduser())
+    FBR_TAX_DIR = _data_path("FBR_TAX_DIR", "~/work/fbr-tax-filing")
     # The FBR agent's own records (filings.db: each tax year's submitted/draft status)
-    FBR_TAX_DATA_DIR = str(_PROJECT_ROOT / Path(os.getenv("FBR_TAX_DATA_DIR") or _user_data_dir() / "fbr_tax").expanduser())
+    FBR_TAX_DATA_DIR = _data_path("FBR_TAX_DATA_DIR", _user_data_dir() / "fbr_tax")
     # Tool calls one filing step may take (reading a whole return is many browser actions)
     FBR_TAX_MAX_TURNS = int(os.getenv("FBR_TAX_MAX_TURNS", "200"))
     # Local faster-whisper model size for voice transcription
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
-    MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))
 
     # ---------------------------------------------------------------------------
     # WhatsApp (Green API — https://green-api.com)
@@ -119,4 +127,11 @@ class Config:
     # Leave empty to write the summary to the application log only.
     MAIL_SUMMARY_WHATSAPP_GROUP_ID = os.getenv("MAIL_SUMMARY_WHATSAPP_GROUP_ID", "")
     # SQLite file that tracks which Message-IDs have already been summarised
-    MAIL_SEEN_DB                   = os.getenv("MAIL_SEEN_DB", "mail_seen.db")
+    MAIL_SEEN_DB                   = _project_path("MAIL_SEEN_DB", "mail_seen.db")
+
+
+# LangSmith reads its settings from the environment; values already exported win.
+os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
+os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
+if Config.LANGCHAIN_API_KEY:
+    os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)

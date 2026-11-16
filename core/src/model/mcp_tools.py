@@ -1,5 +1,5 @@
 """
-MCP tool registry for the property agent.
+The shared MCP tool registry (`_mcp`) every agent takes its tools from.
 
 MCP servers are declared in ``mcp.json`` at the project root.  Add a server
 by appending an entry — no code changes required:

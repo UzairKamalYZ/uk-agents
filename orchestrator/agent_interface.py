@@ -1,33 +1,18 @@
 """
-orchestrator/agent_interface.py — client-facing facade over the multi-agent graph.
+orchestrator/agent_interface.py — the facade every client talks to.
 
-WHY THIS FILE EXISTS
---------------------
-All clients (REST API, Telegram bot, cron job) were originally written against
-LocalAgent, which exposes:
+    agent.ask(prompt, session_id=...)            blocking, for sync callers (cron, scripts)
+    agent.ask(prompt, stream=True)               blocking generator of answer tokens
+    await agent.aask(prompt, session_id=...)     for clients with an event loop (REST, Telegram)
+    agent.astream(prompt, session_id=...)        async generator of answer tokens
 
-    agent.ask(prompt, stream=False, session_id="default") -> str | Generator
-
-OrchestratorAgent provides the exact same interface so every client can switch
-to the multi-agent pipeline by changing one import line — nothing else changes.
-
-ASYNC
------
-aask() / astream() are the async twins used by clients that run an event loop
-(REST, Telegram).  The graph itself runs on its own background loop, so both
-the sync and async methods can be called from anywhere.
-
-STREAMING NOTE
---------------
-_stream_tokens() delegates to MultiAgentGraph.stream_tokens(), which uses
-LangGraph's stream_mode="messages" to intercept AIMessageChunk objects from
-the synthesiser node as the LLM produces them.  Agent-node tokens are filtered
-out so only the final synthesis reaches the caller.
+The graph runs on its own background loop, so all four can be called from anywhere.
+Only the synthesiser's tokens are streamed; a single-agent answer arrives as one chunk.
 """
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator, Callable, Generator
+from typing import AsyncIterator, Callable, Iterator
 
 from langsmith import traceable
 
@@ -37,92 +22,38 @@ from .tracing import tag_current_trace
 
 logger = logging.getLogger(__name__)
 
+OnRoute = Callable[[AgentEntry], None]
+_traced_request = traceable(name="orchestrator.request", run_type="chain", tags=["orchestrator"])
+
 
 class OrchestratorAgent:
-    """
-    Thin facade over MultiAgentGraph.
-
-    Matches the LocalAgent interface used by all clients:
-        agent.ask(prompt)                      → str
-        agent.ask(prompt, stream=True)         → Generator[str, None, None]
-        agent.ask(prompt, session_id="abc")    → str
-        agent.close()                          → None  (context-manager safe)
-
-    Construction
-    ------------
-    Instantiating OrchestratorAgent triggers MultiAgentGraph.__init__, which:
-      - loads agents from agents.json
-      - instantiates each enabled agent (LLM + vector store connections)
-      - compiles the LangGraph StateGraph
-    This happens once at startup and is reused for every subsequent ask().
-    """
+    """Loads the agents in agents.json and compiles the graph once; reused for every request."""
 
     def __init__(self) -> None:
-        # Build and compile the full multi-agent graph
         self._graph = MultiAgentGraph()
         logger.info("[OrchestratorAgent] ready")
 
-    @traceable(
-        name="orchestrator.request",
-        run_type="chain",
-        tags=["orchestrator"],
-    )
+    @_traced_request
     def ask(
-        self,
-        prompt: str,
-        stream: bool = False,
-        session_id: str = "default",
-        *,
-        on_route: Callable[[AgentEntry], None] | None = None,
-    ) -> str | Generator[str, None, None]:
-        """
-        Ask the multi-agent pipeline a question.
-
-        Parameters
-        ----------
-        prompt     : the user's raw question
-        stream     : if True, returns a generator that yields text chunks;
-                     if False (default), blocks until the full answer is ready
-        session_id : passed through to each agent so per-session history is
-                     maintained correctly across turns
-        on_route   : blocking path only — called with each agent's AgentEntry
-                     just before it runs (e.g. to show "Expenditure Tracker is
-                     working on it…")
-
-        Returns
-        -------
-        str                        when stream=False
-        Generator[str, None, None] when stream=True
-        """
+        self, prompt: str, stream: bool = False, session_id: str = "default", *, on_route: OnRoute | None = None
+    ) -> str | Iterator[str]:
+        """Answer one message.  on_route (blocking path only) is called with each agent's
+        AgentEntry just before it runs, e.g. to show who is working on the query."""
         if stream:
-            # Return a generator — the caller iterates it to receive chunks
-            return self._stream_tokens(prompt, session_id)
-
-        # Blocking path — run the full graph and return the final string
+            return self._graph.stream_tokens(prompt, session_id=session_id)
         return self._graph.ask(prompt, session_id=session_id, on_route=self._tagging(on_route))
 
-    @traceable(
-        name="orchestrator.request",
-        run_type="chain",
-        tags=["orchestrator"],
-    )
-    async def aask(
-        self,
-        prompt: str,
-        session_id: str = "default",
-        *,
-        on_route: Callable[[AgentEntry], None] | None = None,
-    ) -> str:
-        """Async ask() for clients running an event loop (REST, Telegram).
+    @_traced_request
+    async def aask(self, prompt: str, session_id: str = "default", *, on_route: OnRoute | None = None) -> str:
+        """Async ask().  on_route runs on the orchestrator's loop thread — see MultiAgentGraph.aask."""
+        return await self._graph.aask(prompt, session_id=session_id, on_route=self._tagging(on_route))
 
-        on_route runs on the orchestrator's loop thread — see MultiAgentGraph.aask.
-        """
-        return await self._graph.aask(
-            prompt, session_id=session_id, on_route=self._tagging(on_route)
-        )
+    def astream(self, prompt: str, session_id: str = "default") -> AsyncIterator[str]:
+        """Async generator of answer tokens as the synthesiser writes them."""
+        return self._graph.astream_tokens(prompt, session_id=session_id)
 
     @staticmethod
-    def _tagging(on_route: Callable[[AgentEntry], None] | None) -> Callable[[AgentEntry], None]:
+    def _tagging(on_route: OnRoute | None) -> OnRoute:
         """Tag each picked agent onto this request's LangSmith trace, then call on_route."""
         routed: list[str] = []
 
@@ -133,31 +64,6 @@ class OrchestratorAgent:
                 on_route(entry)
 
         return _on_route
-
-    def astream(
-        self,
-        prompt: str,
-        session_id: str = "default",
-    ) -> AsyncIterator[str]:
-        """Async generator of answer tokens as the synthesiser writes them."""
-        return self._graph.astream_tokens(prompt, session_id=session_id)
-
-    def _stream_tokens(
-        self, prompt: str, session_id: str
-    ) -> Generator[str, None, None]:
-        """
-        Yield real tokens from the synthesiser LLM as they are generated.
-
-        Delegates to MultiAgentGraph.stream_tokens() which uses LangGraph's
-        stream_mode="messages" to intercept token chunks from the synthesiser
-        node in real time.  Agent-node tokens (property, finance, conversational)
-        are filtered out inside stream_tokens() — only the final synthesis
-        reaches the caller.
-
-        The caller (REST SSE endpoint, Telegram live-edit) receives chunks
-        immediately as the LLM writes them, not after the whole pipeline finishes.
-        """
-        yield from self._graph.stream_tokens(prompt, session_id=session_id)
 
     def close(self) -> None:
         """Close the checkpointer and stop the orchestrator's event loop."""

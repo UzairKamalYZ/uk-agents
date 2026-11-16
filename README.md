@@ -4,8 +4,8 @@
 
 All agents share the same foundation:
 
-- **One base class**: every agent extends `BaseAgent` (`core/`), so the LLM (Claude), session history, optional RAG and MCP tools come for free. A new agent is a prompt plus a few hook methods.
-- **One registry**: agents are listed in `agents.json`. Adding, disabling or re-modelling an agent is a config change.
+- **One base class**: every agent extends `BaseAgent` (`core/`), so the LLM (Claude), session history, optional RAG and MCP tools come for free. A new agent is a prompt file, a class that can be empty, and one registry entry.
+- **One registry**: agents are listed in `agents.json`. Adding, disabling or re-modelling an agent is a config change, and an agent that cannot start (a missing key, an unreachable service) is logged and left out instead of taking the others down.
 - **One front door**: the REST API, Streamlit UI, Telegram bot and cron job all talk to a single `OrchestratorAgent`. Its router reads each request (plus the last few turns of the conversation) and plans which agent(s) handle it, by their `description`.
 - **Background services**: agents that need to run on their own (e.g. the WhatsApp listener and the mail monitor) have standalone entrypoints that run alongside the orchestrator.
 
@@ -42,6 +42,7 @@ To add your own, see [Adding a New Agent](#adding-a-new-agent).
 - [Running the Clients](#running-the-clients)
 - [Adding an MCP Server](#adding-an-mcp-server)
 - [Adding a New Agent](#adding-a-new-agent)
+- [Adding a New Client](#adding-a-new-client)
 - [Testing](#testing)
 - [LangSmith Observability](#langsmith-observability)
 
@@ -100,7 +101,7 @@ uk-agents/
 │
 ├── core/                             # Shared AI infrastructure (all agents import from here)
 │   └── src/
-│       ├── base_agent.py             # BaseAgent ABC — Template Method pattern
+│       ├── base_agent.py             # BaseAgent — hooks with sensible defaults
 │       ├── aio.py                    # BackgroundLoop — event loop on its own thread
 │       ├── output_guard.py           # Strips tool-call markup from every answer
 │       ├── utils.py                  # load_prompt(), run_service()
@@ -136,7 +137,6 @@ uk-agents/
 │   │   └── prompts/System_Prompt.txt
 │   ├── finance/
 │   │   ├── agent.py                  # FinanceAgent(BaseAgent) — stocks MCP only
-│   │   ├── config.py                 # FinanceConfig (prompt path)
 │   │   └── prompts/System_Prompt.txt
 │   ├── whatsapp/                     # WhatsApp integration
 │   │   ├── agent.py                  # WhatsAppAgent(BaseAgent) — RAG, mobile replies
@@ -187,7 +187,7 @@ uk-agents/
 ├── clients/                          # Delivery interfaces
 │   ├── base.py                       # BaseClient ABC (start / stop)
 │   ├── rest/main.py                  # FastAPI REST API (port 8000)
-│   ├── streamlit/main.py             # Streamlit web UI (port 8501)
+│   ├── streamlit/main.py             # Streamlit web UI (port 8501, talks to the REST API)
 │   ├── telegram/main.py              # Telegram long-polling bot (text + voice notes)
 │   ├── cron/main.py                  # Scheduled search (every 30 min)
 │   └── tests/
@@ -269,13 +269,13 @@ When an agent leaves a pending item (e.g. the expense tracker asks "Please check
 
 ## Specialist Agents
 
-The agents below are the ones in the repository today; the list is expected to keep growing. All agents extend `BaseAgent` (`core/src/base_agent.py`) using the **Template Method** pattern. `BaseAgent.__init__` calls three hook methods that each subclass overrides:
+The agents below are the ones in the repository today; the list is expected to keep growing. All agents extend `BaseAgent` (`core/src/base_agent.py`) using the **Template Method** pattern. `BaseAgent.__init__` calls three hooks; each has a default, so a subclass overrides only what differs:
 
 ```python
-class BaseAgent(ABC):
-    def get_system_prompt(self) -> str: ...      # load your prompt file
-    def get_rag_context_manager(self): ...       # RAG manager or NullRagContextManager
-    def get_mcp_tools(self) -> list | None: ...  # None=all tools, []=none, or filtered list
+class BaseAgent:
+    def get_system_prompt(self) -> str: ...      # default: prompts/System_Prompt.txt next to the agent's module
+    def get_rag_context_manager(self): ...       # default: vector search when "rag" is true in agents.json
+    def get_mcp_tools(self) -> list | None: ...  # default: [] (none); None = all tools, or a filtered list
 ```
 
 Agents are registered in **`agents.json`** at the project root. The orchestrator reads this file at startup — no code changes are needed to add, remove, or reconfigure an agent.
@@ -517,22 +517,17 @@ Prepares the Pakistan income tax return and wealth statement on FBR IRIS, up to 
 ### BaseAgent (`core/src/base_agent.py`)
 
 ```python
-class BaseAgent(ABC):
+class BaseAgent:
     def __init__(self, session_id=None, rag_enabled=False,
                  llm_provider=None, llm_model=None):
         # Calls get_system_prompt(), get_rag_context_manager(), get_mcp_tools()
         # Builds LlmModelGraph with the returned values
         ...
 
-    # --- Hooks — override in every subclass ---
-    @abstractmethod
-    def get_system_prompt(self) -> str: ...
-
-    @abstractmethod
-    def get_rag_context_manager(self): ...
-
-    @abstractmethod
-    def get_mcp_tools(self) -> list | None: ...
+    # --- Hooks — override only what differs from the default ---
+    def get_system_prompt(self) -> str: ...      # prompts/System_Prompt.txt beside the agent's module
+    def get_rag_context_manager(self): ...       # RagContextManager if rag_enabled, else NullRagContextManager
+    def get_mcp_tools(self) -> list | None: ...  # [] — no tools
 
     # --- Public interface — inherited as-is ---
     def ask(self, prompt, stream=False, session_id=None): ...
@@ -547,7 +542,7 @@ class BaseAgent(ABC):
 
 An agent that answers without `LlmModelGraph` (like `FbrTaxAgent`) overrides both `ask()` and `aask()`. If it overrides only `ask()`, `BaseAgent.aask()` runs that `ask()` in a worker thread.
 
-`NullRagContextManager` (also in `base_agent.py`) is the no-op placeholder returned by agents that don't need vector search. It always returns `""` from `get_context()`.
+`NullRagContextManager` (also in `base_agent.py`) is the no-op placeholder used when `"rag"` is false. It always returns `""` from `get_context()`.
 
 ### LangGraph pipeline (`core/src/model/llm_model_graph.py`)
 
@@ -658,7 +653,7 @@ class BaseClient(ABC):
 | `WhatsAppListener` | `agents/whatsapp/main.py` | Green API polling | Standalone — does not use OrchestratorAgent |
 | `MailMonitor` | `agents/mails/main.py` | IMAP polling | Standalone — does not use OrchestratorAgent |
 
-REST, Telegram and cron use `OrchestratorAgent` directly (Streamlit goes through REST). REST and Telegram are async and await `aask()` / `astream()`; cron calls the blocking `ask()`. Chats are answered concurrently; messages within one chat are handled in order.
+Every entrypoint is `python -m clients.<name>.main`; REST, Telegram and cron start through `run_service()` (`core/src/utils.py`), which shuts them down cleanly on Ctrl-C / SIGTERM. REST, Telegram and cron use `OrchestratorAgent` directly (Streamlit goes through REST, at `REST_API_URL`, sending `API_KEY` when one is set). REST and Telegram are async and await `aask()` / `astream()`; cron calls the blocking `ask()`. Chats are answered concurrently; messages within one chat are handled in order.
 
 **Telegram voice notes** are transcribed locally with faster-whisper (`WHISPER_MODEL`, loaded once at startup), shown as "🎤 You said: …", then answered like text.
 
@@ -716,7 +711,6 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 | `SENTENCE_TRANSFORMER_MODEL` | _(required)_ | Embedding model, e.g. `sentence-transformers/all-MiniLM-L6-v2` |
 | `PINECONE_API_KEY` | _(required)_ | Pinecone API key |
 | `PINECONE_INDEX_NAME` | _(required)_ | Pinecone index name (created automatically if missing) |
-| `FINANCE_PINECONE_INDEX_NAME` | `PINECONE_INDEX_NAME`, else `finance-agent` | Finance agent's index (`agents/finance/config.py`) |
 
 ### Paths
 
@@ -742,7 +736,8 @@ Path settings resolve relative values from the project root.
 | Variable | Default | Description |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | _(required)_ | Token from [@BotFather](https://t.me/BotFather) |
-| `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
+| `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header (the Streamlit UI sends it automatically) |
+| `REST_API_URL` | `http://localhost:8000` | Where the Streamlit UI finds the REST API |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled job |
 | `WHISPER_MODEL` | `small` | faster-whisper model for Telegram voice notes: `tiny`, `base`, `small`, `medium`, `large-v3` |
 
@@ -851,7 +846,7 @@ curl "http://localhost:8000/ask?prompt=3+bed+Warsaw&stream=true"
 
 ### Streamlit UI
 
-Requires the REST API to be running first.
+Requires the REST API to be running first. It calls `REST_API_URL` (default `http://localhost:8000`) and sends `API_KEY` as `X-API-Key` when one is set.
 
 ```bash
 python -m clients.streamlit.main
@@ -920,25 +915,27 @@ Tools are auto-discovered via `tools/list` and bound to the LLM at startup. Syst
 
 ## Adding a New Agent
 
-1. Create the agent class:
+1. Write the system prompt at `agents/myagent/prompts/System_Prompt.txt`.
+
+2. Create the agent class (plus an empty `agents/myagent/__init__.py`). With no overrides it is a complete agent: its prompt is the file from step 1, it has no tools, and it searches the vector store only when `"rag"` is true in its registry entry.
 
 ```python
 # agents/myagent/agent.py
-from core.src.base_agent import BaseAgent, NullRagContextManager
-from core.src.utils import load_prompt
+from core.src.base_agent import BaseAgent
 
 class MyAgent(BaseAgent):
-    def get_system_prompt(self) -> str:
-        return load_prompt("agents/myagent/prompts/System_Prompt.txt")
-
-    def get_rag_context_manager(self):
-        return NullRagContextManager()   # or RagContextManager(Embedder())
-
-    def get_mcp_tools(self) -> list | None:
-        return []   # [], None (all tools), or filtered list
+    """What this agent does."""
 ```
 
-2. Add a system prompt at `agents/myagent/prompts/System_Prompt.txt`.
+Override a hook only when the default doesn't fit — for example, to give the agent one MCP server's tools:
+
+```python
+from core.src.model.mcp_tools import _mcp
+
+class MyAgent(BaseAgent):
+    def get_mcp_tools(self) -> list | None:
+        return _mcp.langchain_tools(server_name="my_server")   # None = every registered tool
+```
 
 3. Register in `agents.json`:
 
@@ -959,13 +956,42 @@ class MyAgent(BaseAgent):
 
 Every agent uses `LLM_PROVIDER` / `LLM_MODEL_NAME` from `.env`. To give one agent a different model, add `"llm_model": "claude-haiku-5-5"` (and optionally `"llm_provider"`) to its entry.
 
-The router will automatically plan your agent in based on its description. No changes to `core/`, `orchestrator/`, or any client are needed.
+The router will automatically plan your agent in based on its description. No changes to `core/`, `orchestrator/`, or any client are needed. If the agent fails to start, the log says why (`[agent_registry] my_agent could not start`) and every other agent keeps working.
 
 If your agent answers without `LlmModelGraph` (its own SDK session, a script, …), override both `ask()` and `aask()` — the orchestrator calls `aask()`. Add tests under `agents/myagent/tests/`; they are picked up automatically.
 
 An agent doesn't have to sit behind the orchestrator. If it needs to run on its own (polling, schedules, webhooks), give it a `main.py` entrypoint like `agents/whatsapp/main.py` or `agents/mails/main.py`, reuse `create_llm()` from `core/`, and run it with `python -m agents.<name>.main`.
 
 Add a row for it to the [Agent catalog](#agent-catalog).
+
+---
+
+## Adding a New Client
+
+A client is one file, `clients/<name>/main.py` (plus an empty `__init__.py`):
+
+```python
+from logging_config import setup_logging
+setup_logging()
+
+from clients.base import BaseClient
+from core.src.utils import run_service
+from orchestrator.agent_interface import OrchestratorAgent
+
+
+class MyClient(BaseClient):
+    def start(self) -> None:          # blocks until stopped
+        with OrchestratorAgent() as agent:
+            print(agent.ask("hello", session_id="my-client"))
+
+    def stop(self) -> None: ...       # optional: called on Ctrl-C / SIGTERM
+
+
+if __name__ == "__main__":
+    run_service(MyClient(), "my-client")
+```
+
+Run it with `python -m clients.<name>.main`. Clients with an event loop await `agent.aask()` / iterate `agent.astream()` instead of calling `ask()`. Every agent in `agents.json` is available to it straight away.
 
 ---
 

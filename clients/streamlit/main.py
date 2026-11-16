@@ -1,34 +1,25 @@
-import os
+"""Streamlit chat UI over the REST API (start `python -m clients.rest.main` first).
+
+This file plays two roles: `python -m clients.streamlit.main` launches the Streamlit
+server on it, and Streamlit then re-runs it as the page script on every interaction.
+"""
 import subprocess
 import sys
 from pathlib import Path
 
-# Ensure the project root is importable regardless of how this file is launched:
-# `python -m clients.streamlit.main`, `streamlit run`, or via subprocess.
-# Must happen before any local package import.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# Streamlit runs this file as a plain script, so the project root isn't on sys.path yet.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-import streamlit as st
 import requests
-import random
+import streamlit as st
+from streamlit import runtime
 
 from clients.base import BaseClient
+from core.src.config.config import Config
 
-# ── Streamlit UI ─────────────────────────────────────────────────────────────
-# Everything below this block is executed by Streamlit on every app rerun.
-# Do not call StreamlitClient().start() here — use `streamlit run` instead.
-
-AGENT_API_URL = "http://localhost:8000/ask"
-
-JOKES = [
-    "Why don't scientists trust atoms? Because they make up everything!",
-    "What do you call a fake noodle? An impasta!",
-    "Why did the scarecrow win an award? Because he was outstanding in his field!",
-    "What do you call cheese that isn't yours? Nacho cheese!",
-    "How do you organize a space party? You planet!",
-]
+AGENT_API_URL = f"{Config.REST_API_URL.rstrip('/')}/ask"
 
 
 def _get_agent_response(user_query: str) -> str:
@@ -36,9 +27,10 @@ def _get_agent_response(user_query: str) -> str:
     params = {"prompt": user_query}
     if st.session_state.get("session_id"):
         params["session_id"] = st.session_state["session_id"]
-    with st.spinner(random.choice(JOKES)):
+    headers = {"X-API-Key": Config.API_KEY} if Config.API_KEY else None
+    with st.spinner("Thinking…"):
         try:
-            response = requests.get(AGENT_API_URL, params=params)
+            response = requests.get(AGENT_API_URL, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
             if data.get("session_id"):
@@ -51,22 +43,8 @@ def _get_agent_response(user_query: str) -> str:
 
 
 def _run_ui() -> None:
-    st.set_page_config(layout="wide")
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background-image: url("https://www.rawpixel.com/image/5908905/free-apartment-image-public-domain-cc0-photo");
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            background-attachment: fixed;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.title(" Your own mini property agent 🕵️‍♂️🏡")
+    st.set_page_config(page_title="UK Agents", layout="wide")
+    st.title("UK Agents 🤖")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -75,41 +53,25 @@ def _run_ui() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if prompt := st.chat_input("How can I help you find your next property?"):
+    if prompt := st.chat_input("How can I help?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.messages.append({"role": "agent", "content": _get_agent_response(prompt)})
+        st.session_state.messages.append({"role": "assistant", "content": _get_agent_response(prompt)})
         st.rerun()
 
 
-# ── BaseClient implementation ─────────────────────────────────────────────────
-
 class StreamlitClient(BaseClient):
-    """Launches the Streamlit UI server as a subprocess."""
+    """Launches the Streamlit server on this file."""
 
     def start(self) -> None:
-        env = os.environ.copy()
-        # Make the project root importable inside the subprocess so that
-        # `from clients.base import BaseClient` resolves when Streamlit runs
-        # this script outside a `python -m` context.
-        root = str(_PROJECT_ROOT)
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = f"{root}{os.pathsep}{existing}" if existing else root
-        # Signal the subprocess that it is the Streamlit worker, not the launcher,
-        # so the __main__ guard calls _run_ui() instead of starting again.
-        env["_STREAMLIT_APP"] = "1"
         subprocess.run(
             [sys.executable, "-m", "streamlit", "run", str(Path(__file__))],
-            env=env,
+            cwd=_PROJECT_ROOT,
             check=True,
         )
 
 
-# When launched via `python -m clients.streamlit.main` (the launcher):
-#   _STREAMLIT_APP is not set → call start(), which spawns the subprocess.
-# When Streamlit re-executes this file inside the subprocess (the worker):
-#   _STREAMLIT_APP="1" → call _run_ui() to render the UI.
 if __name__ == "__main__":
-    if os.environ.get("_STREAMLIT_APP"):
+    if runtime.exists():   # Streamlit is running this file as the page script
         _run_ui()
     else:
         StreamlitClient().start()

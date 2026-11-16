@@ -2,6 +2,7 @@ from logging_config import setup_logging
 setup_logging()
 
 import asyncio
+import logging
 import uuid
 from contextlib import asynccontextmanager
 
@@ -13,7 +14,10 @@ from starlette.concurrency import iterate_in_threadpool
 
 from orchestrator.agent_interface import OrchestratorAgent
 from core.src.config.config import Config
+from core.src.utils import run_service
 from clients.base import BaseClient
+
+logger = logging.getLogger(__name__)
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -27,12 +31,10 @@ async def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    agent = OrchestratorAgent()
-    app.state.agent = agent
-    print("✅ Agent started.")
-    yield
-    agent.close()
-    print("🧹 Agent closed successfully.")
+    with OrchestratorAgent() as agent:
+        app.state.agent = agent
+        logger.info("REST API ready")
+        yield
 
 
 app = FastAPI(lifespan=lifespan)
@@ -48,7 +50,7 @@ async def sse_formatter(stream):
         async for chunk in chunks:
             yield f"data: {chunk}\n\n"
     except asyncio.CancelledError:
-        print("Client disconnected.")
+        logger.info("Client disconnected.")
 
 
 @app.get("/ask")
@@ -90,4 +92,4 @@ class RestClient(BaseClient):
 
 
 if __name__ == "__main__":
-    RestClient().start()
+    run_service(RestClient(), "rest")

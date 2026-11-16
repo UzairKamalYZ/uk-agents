@@ -18,7 +18,7 @@ uk-agents/
 ├── pyproject.toml / uv.lock    # Dependencies (uv); pytest config (testpaths)
 ├── logging_config.py           # setup_logging() → terminal + logs/agent.log (rotating)
 ├── core/src/                   # Shared infrastructure
-│   ├── base_agent.py           # BaseAgent ABC (Template Method hooks) + NullRagContextManager
+│   ├── base_agent.py           # BaseAgent (Template Method hooks with defaults) + NullRagContextManager
 │   ├── aio.py                  # BackgroundLoop — a dedicated event loop on its own thread
 │   ├── output_guard.py         # scrub() / StreamScrubber — strips tool-call markup from answers
 │   ├── utils.py                # load_prompt(), run_service()
@@ -91,7 +91,7 @@ Public methods: `ask()`, `aask()` (async), `ask_stream()`, `close()`. `ask`/`aas
 
 ### BaseAgent (`core/src/base_agent.py`)
 
-Subclasses implement three hooks — `get_system_prompt()`, `get_rag_context_manager()`, `get_mcp_tools()` (`None` = every MCP tool, `[]` = none, or a list). They inherit `ask()`, `aask()`, `close()` and the pending-confirmation hooks `pending_summary()` / `confirm_pending()` / `discard_pending()` (no-ops unless overridden). An agent that answers some other way (e.g. `FbrTaxAgent` runs a Claude Code session) overrides `ask()` **and** `aask()`; if only `ask()` is overridden, `BaseAgent.aask()` runs that `ask()` in a worker thread.
+Three hooks, each with a default, so a subclass overrides only what differs: `get_system_prompt()` (default: `prompts/System_Prompt.txt` next to the agent's module), `get_rag_context_manager()` (default: vector search when `"rag"` is true in `agents.json`, else `NullRagContextManager`), `get_mcp_tools()` (default `[]` = none; `None` = every MCP tool, or a list). An agent with no overrides is a complete agent (`MailAgent`, `WhatsAppAgent`). Subclasses inherit `ask()`, `aask()`, `close()` and the pending-confirmation hooks `pending_summary()` / `confirm_pending()` / `discard_pending()` (no-ops unless overridden). An agent that answers some other way (e.g. `FbrTaxAgent` runs a Claude Code session) overrides `ask()` **and** `aask()`; if only `ask()` is overridden, `BaseAgent.aask()` runs that `ask()` in a worker thread.
 
 ### Client Layer (`clients/`)
 
@@ -100,7 +100,7 @@ All clients implement `BaseClient` (`start()` blocks until stopped, `stop()`, co
 | Client | Backend call | Notes |
 |---|---|---|
 | REST (`:8000`) | `aask` / `astream` | `session_id` param continues a conversation; SSE streaming |
-| Streamlit (`:8501`) | HTTP → REST `/ask` | Needs the REST API running; keeps the returned `session_id`, so a browser chat is one conversation |
+| Streamlit (`:8501`) | HTTP → REST `/ask` | Needs the REST API running (`REST_API_URL`; sends `API_KEY` as `X-API-Key` when set); keeps the returned `session_id`, so a browser chat is one conversation |
 | Telegram | `aask(..., on_route=…)` | Per-chat session; voice notes (faster-whisper); shows "🤖 <Agent> is working…" |
 | Cron | `ask` | Sends `CRON_SEARCH_PROMPT` every 30 minutes |
 
@@ -137,6 +137,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `TELEGRAM_BOT_TOKEN` | — | From @BotFather |
 | `WHISPER_MODEL` | `small` | faster-whisper size for voice notes |
 | `API_KEY` | _(empty — auth off)_ | REST API key (`X-API-Key` header) |
+| `REST_API_URL` | `http://localhost:8000` | Where the Streamlit UI finds the REST API |
 | `CRON_SEARCH_PROMPT` | 2-bed Poland < 1000 | Cron job prompt |
 | `EXPENSES_DIR` | per-user data dir | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `%APPDATA%\uk-agents\expenses` (Windows) |
 | `FBR_TAX_DIR` | `~/work/fbr-tax-filing` | Project holding the `fbr-iris-filing` skill |
@@ -147,7 +148,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `SBR_WEBDRIVER` | — | Selenium WebDriver URL, read directly by `agents/property/scraping/scrape_se.py` |
 | `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | `false` / — / `uk-agents` | LangSmith tracing |
 
-`FINANCE_PROMPT_FILE` and `FINANCE_PINECONE_INDEX_NAME` live in `agents/finance/config.py`.
+LangSmith's environment variables are set once, at the bottom of `config.py`.
 
 ---
 
@@ -200,7 +201,7 @@ Streaming format (SSE): each chunk is sent as `data: {chunk}\n\n`. When `API_KEY
 
 ### Adding a New Agent
 
-1. `agents/<name>/agent.py`: subclass `BaseAgent`, implement the three hooks; prompt in `agents/<name>/prompts/System_Prompt.txt`.
+1. `agents/<name>/agent.py`: subclass `BaseAgent`; prompt in `agents/<name>/prompts/System_Prompt.txt` (picked up automatically). Override a hook only when its default doesn't fit.
 2. Register it in `agents.json`: `name`, `class`, `description` (what the router routes on), `enabled`, `rag`, optional `display_name`, `summary` (shown by the conversational agent), `remarks` (Telegram waiting lines), `llm_model` / `llm_provider`.
 3. Add tests under `agents/<name>/tests/`.
 4. If it answers outside `LlmModelGraph`, override both `ask()` and `aask()`.
@@ -208,7 +209,7 @@ Streaming format (SSE): each chunk is sent as `data: {chunk}\n\n`. When `API_KEY
 
 ### Adding a New Client
 
-Create `clients/<name>/main.py` (+ `__init__.py`), implement `BaseClient`, call `setup_logging()` first, use `OrchestratorAgent`, run with `python -m clients.<name>.main`.
+Create `clients/<name>/main.py` (+ `__init__.py`), implement `BaseClient`, call `setup_logging()` first, use `OrchestratorAgent`, end with `run_service(MyClient(), "<name>")` (clean Ctrl-C / SIGTERM shutdown), run with `python -m clients.<name>.main`.
 
 ### Adding an LLM Provider / Vector Store
 
@@ -219,6 +220,7 @@ Create `clients/<name>/main.py` (+ `__init__.py`), implement `BaseClient`, call 
 
 ## Common Gotchas
 
+- **A broken agent is skipped, not fatal**: `load_agents()` logs `[agent_registry] <name> could not start` and leaves that agent out; the router never sees it. Check the log when an agent seems to be missing.
 - **Always run from the project root** with `-m` (`python -m clients.telegram.main`), so `core`, `agents`, `orchestrator` and `clients` are importable.
 - **Two Claude backends** (`ANTHROPIC_API`): `true` → `ChatAnthropic` with `ANTHROPIC_API_KEY` (billed per token); `false` → `ChatClaudeCode`, which drives the local `claude` CLI through the Claude Agent SDK with its logged-in subscription. In Claude Code mode the agent's tools are exposed as an in-process MCP server and Claude Code runs the tool loop itself, so responses never contain `tool_calls`; Claude Code's built-in tools and user/project settings are disabled. The FBR agent always uses the Claude Code login, whatever `ANTHROPIC_API` says.
 - **Read `.text`, not `.content`**: Claude responses include thinking blocks, so `AIMessage.content` is a list.

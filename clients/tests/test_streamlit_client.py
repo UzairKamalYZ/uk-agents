@@ -92,7 +92,25 @@ class TestGetAgentResponse(unittest.TestCase):
 
         _get_agent_response("studio Kraków")
 
-        mock_get.assert_called_once_with(AGENT_API_URL, params={"prompt": "studio Kraków"})
+        mock_get.assert_called_once()
+        self.assertEqual(mock_get.call_args.args, (AGENT_API_URL,))
+        self.assertEqual(mock_get.call_args.kwargs["params"], {"prompt": "studio Kraków"})
+
+    @patch("clients.streamlit.main.Config")
+    @patch("clients.streamlit.main.st")
+    @patch("clients.streamlit.main.requests.get")
+    def test_should_send_the_api_key_only_when_one_is_configured(self, mock_get, mock_st, mock_config):
+        """With API_KEY set the REST API rejects requests without the X-API-Key header."""
+        mock_st.session_state = {}
+        mock_get.return_value.json.return_value = {"response": "ok"}
+
+        mock_config.API_KEY = "secret"
+        _get_agent_response("hi")
+        self.assertEqual(mock_get.call_args.kwargs["headers"], {"X-API-Key": "secret"})
+
+        mock_config.API_KEY = ""
+        _get_agent_response("hi")
+        self.assertIsNone(mock_get.call_args.kwargs["headers"])
 
     @patch("clients.streamlit.main.st")
     @patch("clients.streamlit.main.requests.get")

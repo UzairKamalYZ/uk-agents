@@ -13,6 +13,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 from orchestrator.agent_interface import OrchestratorAgent
 from core.src.config.config import Config
 from core.src.speech.transcriber import Transcriber
+from core.src.utils import run_service
 from clients.base import BaseClient
 
 ROUTING_TEXT = "🔀 Finding the right agent for your query…"
@@ -59,8 +60,8 @@ class _Bot:
                     logger.warning("Could not show the working agent: %s", result)
             await sent.edit_text(f"{header}{response or 'No response generated.'}")
 
-        except Exception as e:
-            logger.error(f"Error from LocalAgent: {e}")
+        except Exception:
+            logger.exception("Could not answer chat %s", session_id)
             await sent.edit_text("Sorry, something went wrong. Please try again.")
 
     @staticmethod
@@ -85,8 +86,8 @@ class _Bot:
                 transcript = await asyncio.get_running_loop().run_in_executor(
                     None, self.transcriber.transcribe, path
                 )
-        except Exception as e:
-            logger.error(f"Voice transcription failed: {e}")
+        except Exception:
+            logger.exception("Voice transcription failed")
             await update.effective_message.reply_text(
                 "Sorry, I couldn't transcribe that voice note. Please try again or type it."
             )
@@ -115,4 +116,4 @@ class TelegramClient(BaseClient):
 
 
 if __name__ == "__main__":
-    TelegramClient().start()
+    run_service(TelegramClient(), "telegram")

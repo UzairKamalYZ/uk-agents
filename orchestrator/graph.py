@@ -57,15 +57,12 @@ agent calls have run in one turn the flow goes to the synthesiser.
 
 ADDING A NEW AGENT
 ------------------
-Edit agents.json (project root) only — no Python changes needed here.
-Set "enabled": true and provide a "class" dotted path; graph.py will pick
-it up automatically on the next startup.
+Add it to agents.json — nothing changes here.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import weakref
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -86,14 +83,6 @@ from core.src.model.llm_factory import create_llm
 from core.src.model.session_manager import HistoryStore, shared_session_store
 from core.src.output_guard import StreamScrubber
 from core.src.utils import load_prompt
-
-# Register LangSmith env vars so traces from the orchestrator appear in the
-# same project as the individual agent traces (set with setdefault so a value
-# already exported by the shell or llm_model_graph.py is never overwritten).
-os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
-os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
-if Config.LANGCHAIN_API_KEY:
-    os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
 from .agent_registry import AgentEntry, load_agents
 from .conversation import ConversationMemory
@@ -144,89 +133,37 @@ def _route_plan(state: GraphState) -> str:
 # ---------------------------------------------------------------------------
 
 class MultiAgentGraph:
-    """
-    Builds, wires, and compiles the full LangGraph router multi-agent graph.
+    """The compiled router → agents → synthesiser (→ confirmation) graph.
 
-    Construction happens once at startup (__init__).  After that, stream() and
-    ask() can be called repeatedly without rebuilding the graph.
-
-    Build order inside __init__
-    ---------------------------
-    1. Create the shared LLM (router, synthesiser, confirmation).
-    2. Load enabled agents from agents.json via agent_registry.
-    3. Build the agent list for the router prompt; load the router,
-       synthesiser and confirmation prompts.
-    4. Create node functions via factories in nodes.py.
-    5. Wire nodes and edges into a StateGraph.
-    6. Compile the graph with a checkpointer (SQLite at CHECKPOINT_DB_FILE
-       unless one is passed in), which is what lets a run pause and resume.
+    Built once at startup from agents.json; ask() / aask() / stream_tokens() /
+    astream_tokens() then reuse it.  The checkpointer (SQLite at CHECKPOINT_DB_FILE
+    unless one is passed in) is what lets a run pause for a confirmation and resume.
     """
 
     def __init__(
         self, checkpointer: BaseCheckpointSaver | None = None, history_store: HistoryStore | None = None
     ) -> None:
-
         # Recent turns per session, so follow-ups ("yes", "do that too") keep their context
         self._memory = ConversationMemory(history_store or shared_session_store(Config.SESSION_DB_FILE))
 
-        # -----------------------------------------------------------------
-        # 1. Shared LLM — same model drives router, synthesiser and confirmation
-        # -----------------------------------------------------------------
+        # One LLM drives the router, synthesiser and confirmation
         llm = create_llm(Config.LLM_PROVIDER, Config.LLM_MODEL_NAME)
-
-        # -----------------------------------------------------------------
-        # 2. Load agents — reads agents.json, skips disabled entries,
-        #    and returns live instantiated agent objects
-        # -----------------------------------------------------------------
         agents = load_agents()
-        agent_names = {a.name for a in agents}   # used by router + route_map
-
-        # -----------------------------------------------------------------
-        # 3. Build the agent description block injected into the router
-        #    prompt so the LLM knows which agents exist and what they do
-        # -----------------------------------------------------------------
-        agents_block = "\n".join(
-            f"- {a.name}: {a.description}" for a in agents
-        )
-        router_prompt = load_prompt(Config.ROUTER_PROMPT_FILE)
-        synthesiser_prompt = load_prompt(Config.SYNTHESISER_PROMPT_FILE)
-        confirmation_prompt = load_prompt(Config.CONFIRMATION_PROMPT_FILE)
-
-        # -----------------------------------------------------------------
-        # 4. Instantiate node objects
-        #    Each class closes over its dependencies (llm, prompt, agent
-        #    instance) and is callable as a plain function(state) -> dict.
-        # -----------------------------------------------------------------
-        router_node = RouterNode(llm, router_prompt, agents_block, agent_names)
-        synthesiser_node = SynthesiserNode(llm, synthesiser_prompt)
-        confirmation_node = ConfirmationNode(llm, confirmation_prompt, agents)
+        agent_names = {a.name for a in agents}
         self._agents = {a.name: a for a in agents}
-        # Agent nodes are created in the loop below (one per enabled agent)
+        agents_block = "\n".join(f"- {a.name}: {a.description}" for a in agents)
 
-        # -----------------------------------------------------------------
-        # 5. Wire the StateGraph
-        # -----------------------------------------------------------------
         builder = StateGraph(GraphState)
-
-        # Fixed nodes — always present regardless of agents.json contents
-        builder.add_node("router", router_node)
-        builder.add_node("synthesiser", synthesiser_node)
-        builder.add_node("confirmation", confirmation_node)
-
-        # Entry point: a fresh turn always starts at the router
+        builder.add_node("router", RouterNode(llm, load_prompt(Config.ROUTER_PROMPT_FILE), agents_block, agent_names))
+        builder.add_node("synthesiser", SynthesiserNode(llm, load_prompt(Config.SYNTHESISER_PROMPT_FILE)))
+        builder.add_node("confirmation", ConfirmationNode(llm, load_prompt(Config.CONFIRMATION_PROMPT_FILE), agents))
         builder.add_edge(START, "router")
 
-        # Conditional edges — route_map tells LangGraph every possible return
-        # value of a routing function and which node name it maps to.
-        route_map = {name: name for name in agent_names}
-        route_map["synthesiser"] = "synthesiser"
+        # After the router and after each agent, the plan decides what runs next (no LLM call)
+        route_map = {name: name for name in agent_names} | {"synthesiser": "synthesiser"}
         builder.add_conditional_edges("router", _route_plan, route_map)
-
-        # Dynamic agent nodes — one per enabled entry in agents.json; after each
-        # one the plan decides what runs next (no LLM call in between)
         for agent in agents:
-            node_fn = AgentNode(agent.name, agent.instance)
-            builder.add_node(agent.name, node_fn)
+            builder.add_node(agent.name, AgentNode(agent.name, agent.instance))
             builder.add_conditional_edges(agent.name, _route_plan, route_map)
 
         # After answering: finish, or pause for a pending item's confirmation
@@ -239,9 +176,6 @@ class MultiAgentGraph:
             {**route_map, "router": "router", END: END},
         )
 
-        # -----------------------------------------------------------------
-        # 6. Compile — LangGraph validates the graph topology here
-        # -----------------------------------------------------------------
         # The graph runs on its own event loop: the aiosqlite checkpointer must
         # stay on one loop, and sync + async callers can then both use it.
         self._runtime = BackgroundLoop("orchestrator-loop")

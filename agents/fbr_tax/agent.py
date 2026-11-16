@@ -4,16 +4,14 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from core.src.base_agent import BaseAgent, NullRagContextManager
+from core.src.base_agent import BaseAgent
 from core.src.config.config import Config
-from core.src.utils import load_prompt
 
 from .runner import SKILL, FilingRunner, FilingSessions
 from .tracker import FilingTracker
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_FILE = Path(__file__).parent / "prompts" / "System_Prompt.txt"
 _SIGNATURE = "\n\n— FBR-PK Tax Filing"
 
 BUSY = "⏳ Still working on your previous message — I'll answer it first." + _SIGNATURE
@@ -32,22 +30,13 @@ class FbrTaxAgent(BaseAgent):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._runner = FilingRunner(
-            Path(Config.FBR_TAX_DIR), load_prompt(_PROMPT_FILE),
+            Path(Config.FBR_TAX_DIR), self.get_system_prompt(),
             FilingTracker(Path(Config.FBR_TAX_DATA_DIR) / "filings.db"),
             model=kwargs.get("llm_model") or Config.LLM_MODEL_NAME,
             effort=Config.LLM_EFFORT, max_turns=Config.FBR_TAX_MAX_TURNS,
         )
         self._sessions = FilingSessions(Config.SESSION_DB_FILE)
         self._busy = threading.Lock()
-
-    def get_system_prompt(self) -> str:
-        return load_prompt(_PROMPT_FILE)
-
-    def get_rag_context_manager(self):
-        return NullRagContextManager()
-
-    def get_mcp_tools(self) -> list:
-        return []
 
     def _now(self) -> datetime:
         return datetime.now()
