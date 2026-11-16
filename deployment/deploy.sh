@@ -17,7 +17,9 @@
 # it — the script may be replaced on disk by the very pull it performs.
 main() {
     set -uo pipefail
-    set -m   # each service gets its own process group, so stopping it stops its children too
+    # Nothing here reads the keyboard. Without this, a command that touches the terminal
+    # while the script runs in the background (nohup … &) is suspended by the terminal.
+    exec </dev/null
 
     REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     SELF="$REPO_DIR/deployment/deploy.sh"
@@ -40,25 +42,35 @@ main() {
     preflight
     trap 'log "stopping"; stop_all; exit 0' INT TERM
 
-    if update_available; then
+    if fetch && behind; then
         log "checkout is behind $REMOTE/$BRANCH — updating before the first start"
         pull || die "could not fast-forward to $REMOTE/$BRANCH (see above)"
     fi
     build || die "build failed"
     start_all
+    local deployed   # the commit the services are running
+    deployed="$(git rev-parse HEAD)"
     log "running $(git rev-parse --short HEAD); checking $REMOTE/$BRANCH every ${POLL_SECONDS}s"
 
-    local skipped=""   # a commit that failed to build or test — not retried until main moves again
+    local skipped=""   # a commit that could not be deployed — not retried until main moves again
     while true; do
         sleep "$POLL_SECONDS" &
         wait $!        # an interruptible sleep: the trap runs at once
         restart_dead
-        update_available || continue
+        fetch || continue
         local target previous
         target="$(git rev-parse "$REMOTE/$BRANCH")"
+        # Compare with what is running, not with the checkout: a commit that reached the
+        # checkout some other way (a manual git pull) still has to be deployed.
+        [ "$target" = "$deployed" ] && continue
         [ "$target" = "$skipped" ] && continue
         previous="$(git rev-parse HEAD)"
         log "new commit on $BRANCH: $(git log -1 --format='%h %s' "$target")"
+        if [ "$previous" != "$target" ] && ! behind; then
+            log "NOT deployed — this checkout has commits that $REMOTE/$BRANCH doesn't"
+            skipped="$target"
+            continue
+        fi
         if pull && build && run_tests; then
             log "deploying $(git rev-parse --short HEAD)"
             stop_all
@@ -86,10 +98,15 @@ preflight() {
     done
 }
 
-# True when the remote branch has commits this checkout doesn't. A failed fetch
-# (GitHub or the network is down) just means "nothing new right now".
-update_available() {
-    git fetch --quiet "$REMOTE" "$BRANCH" 2>/dev/null || { log "fetch failed — will retry"; return 1; }
+# Ask the remote for the latest commit of the branch. A failed fetch (GitHub or the
+# network is down) just means "nothing new right now".
+fetch() {
+    git fetch --quiet "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>/dev/null ||
+        { log "fetch failed — will retry"; return 1; }
+}
+
+# True when the remote branch has commits this checkout doesn't, and nothing the other way.
+behind() {
     [ "$(git rev-parse HEAD)" != "$(git rev-parse "$REMOTE/$BRANCH")" ] &&
         git merge-base --is-ancestor HEAD "$REMOTE/$BRANCH"
 }
@@ -119,7 +136,10 @@ is_running() {
 
 start() {
     # Output of the current run only; the application's own history is in logs/agent.log
-    uv run --no-sync python -m "clients.$1.main" >"$LOG_DIR/deploy-$1.log" 2>&1 &
+    : >"$LOG_DIR/deploy-$1.log"
+    set -m   # its own process group, so stopping the service stops its children too
+    uv run --no-sync python -m "clients.$1.main" >>"$LOG_DIR/deploy-$1.log" 2>&1 &
+    set +m
     echo $! >"$RUN_DIR/$1.pid"
     log "started $1 (pid $!)"
 }
