@@ -25,6 +25,10 @@ _BOT = ":material/smart_toy:"
 _USER = ":material/person:"
 _COLOURS = ("violet", "blue", "green", "orange", "red")
 _CARDS_PER_ROW = 3
+_DISCLAIMER = (
+    "Private tool, built for Uzair Kamal's personal use only. "
+    "It is not a general-purpose or public service."
+)
 
 
 def _get_agent_response(user_query: str) -> str:
@@ -98,6 +102,11 @@ def _welcome(agents: list[dict]) -> str | None:
     return picked
 
 
+def _footer() -> None:
+    """The usage disclaimer, pinned under the chat box so it is on screen at all times."""
+    st.bottom.caption(_DISCLAIMER, text_alignment="center")
+
+
 def _show(message: dict) -> None:
     is_user = message["role"] == "user"
     with st.chat_message(message["role"], avatar=_USER if is_user else _BOT):
@@ -114,6 +123,7 @@ def _run_ui() -> None:
     _sidebar(agents)
 
     prompt = st.chat_input("Message UK Agents", submit_mode="disable")
+    _footer()
     if not st.session_state.messages:
         welcome = st.empty()
         with welcome.container():
