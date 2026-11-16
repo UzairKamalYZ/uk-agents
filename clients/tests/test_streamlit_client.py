@@ -184,6 +184,15 @@ class TestChatPage(unittest.TestCase):
         self.assertFalse(at.exception)
         self.assertEqual([b.label for b in at.main.button], examples)
 
+    def test_usage_disclaimer_is_shown_on_the_welcome_screen_and_during_a_chat(self):
+        from clients.streamlit.main import _DISCLAIMER
+        with patch("requests.get", return_value=self._reply("Hello.")):
+            at = self._page().run(timeout=30)
+            self.assertIn(_DISCLAIMER, [c.value for c in at.caption])
+            at.chat_input[0].set_value("hi").run(timeout=30)
+        self.assertIn(_DISCLAIMER, [c.value for c in at.caption])
+        self.assertIn("Uzair Kamal", _DISCLAIMER)
+
     def test_starter_prompt_is_asked_and_new_chat_clears_the_conversation(self):
         with patch("requests.get", return_value=self._reply("I can do many things.")) as mock_get:
             at = self._page().run(timeout=30)
