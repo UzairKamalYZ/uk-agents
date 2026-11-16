@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import List, TypedDict
 
 from langchain_core.language_models import BaseChatModel
@@ -20,6 +21,10 @@ from .session_manager import HistoryStore, InMemoryHistoryStore
 
 logger = logging.getLogger(__name__)
 
+_SEARCH_QUERY_PROMPT_FILE = Path(__file__).parent / "prompts" / "search_query.txt"
+_SEARCH_QUERY_TURNS = 3            # turns of conversation the search query is built from
+_SEARCH_QUERY_MESSAGE_CHARS = 2000  # a long answer (several listings) is cut to this
+
 
 class State(TypedDict):
     user_prompt: str
@@ -30,6 +35,10 @@ class State(TypedDict):
 
 class LlmModelGraph:
     """One agent's pipeline: retrieve (RAG context) → generate (LLM + tool loop).
+
+    For a RAG agent, a follow-up ("something cheaper?") is first turned into a search query
+    that carries the conversation's criteria — the latest message alone would search for
+    the wrong thing.
 
     Every step has a sync and an async form: ask() / graph.invoke() use the first,
     aask() / graph.ainvoke() the second.
@@ -58,6 +67,8 @@ class LlmModelGraph:
         self._tools = tools if tools is not None else _mcp.langchain_tools()
         logger.info("[%s] tools loaded: %s", agent_name, [t.name for t in self._tools])
         self.llm = llm.bind_tools(self._tools) if self._tools else llm
+        self._query_llm = llm   # no tools: it only rewrites follow-ups into search queries
+        self._search_query_prompt = load_prompt(_SEARCH_QUERY_PROMPT_FILE) if rag_enabled else ""
 
         self.graph = self._build_graph()
 
@@ -106,13 +117,54 @@ class LlmModelGraph:
         return graph.compile()
 
     def _retrieve_node(self, state: State) -> dict:
-        context = self.rag_context_manager.get_context(state["user_prompt"])
+        query = state["user_prompt"]
+        messages = self._search_query_messages(state)
+        if messages:
+            try:
+                query = self._search_query(self._query_llm.invoke(messages), query)
+            except Exception:
+                logger.exception("[%s] search query rewrite failed — searching on the message", self.agent_name)
+        return self._retrieve(query)
+
+    async def _aretrieve_node(self, state: State) -> dict:
+        query = state["user_prompt"]
+        messages = self._search_query_messages(state)
+        if messages:
+            try:
+                query = self._search_query(await self._query_llm.ainvoke(messages), query)
+            except Exception:
+                logger.exception("[%s] search query rewrite failed — searching on the message", self.agent_name)
+        # Embedding + vector search are blocking — keep them off the event loop
+        return await asyncio.to_thread(self._retrieve, query)
+
+    def _retrieve(self, query: str) -> dict:
+        context = self.rag_context_manager.get_context(query)
         logger.info("[%s] retrieve → context_len=%d", self.agent_name, len(context))
         return {"context": context}
 
-    async def _aretrieve_node(self, state: State) -> dict:
-        # Embedding + vector search are blocking — keep them off the event loop
-        return await asyncio.to_thread(self._retrieve_node, state)
+    def _search_query_messages(self, state: State) -> list | None:
+        """The LLM call that makes a follow-up searchable; None when the message is searched as it is."""
+        history = state["session_history"][-_SEARCH_QUERY_TURNS * 2:]
+        if not self._rag_enabled or not history:
+            return None   # not a RAG agent, or the first message of a conversation
+        lines = []
+        for message in history:
+            speaker = "User" if isinstance(message, HumanMessage) else "Assistant"
+            lines.append(f"{speaker}: {str(message.text)[:_SEARCH_QUERY_MESSAGE_CHARS]}")
+        conversation = "\n".join(lines)
+        return [
+            SystemMessage(content=self._search_query_prompt),
+            HumanMessage(content=f"Conversation:\n{conversation}\n\nLatest message: {state['user_prompt']}"),
+        ]
+
+    def _search_query(self, response, user_prompt: str) -> str:
+        """The rewritten query, or the user's message when the LLM returned nothing usable."""
+        text = response.text
+        query = " ".join(text.split()) if isinstance(text, str) else ""
+        if not query:
+            return user_prompt
+        logger.info("[%s] search query: %r → %r", self.agent_name, user_prompt, query)
+        return query
 
     def _generate_node(self, state: State) -> dict:
         messages = self._initial_messages(state)

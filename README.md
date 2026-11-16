@@ -331,7 +331,10 @@ user_prompt
   │
   ▼
 [retrieve node]
-  Embedder.embed_query(user_prompt)
+  follow-up? → one LLM call turns it into a search query that carries the
+               conversation's criteria ("something cheaper?" → "2-bedroom flat
+               in Warsaw cheaper than 600000"); a first message is used as written
+  Embedder.embed_query(search query)
   → VectorStore.search(query_vector, k=RAG_K)   (default 5)
   → RagContextManager formats results as readable text
   → state["context"] = "Property 1: ...\nProperty 2: ..."
@@ -549,7 +552,8 @@ An agent that answers without `LlmModelGraph` (like `FbrTaxAgent`) overrides bot
 Two-node graph: `retrieve → generate`.
 
 **Node: retrieve**
-- Calls `rag_context_manager.get_context(user_prompt)`
+- Calls `rag_context_manager.get_context(query)`
+- The query is the user's message — except on a RAG agent's follow-up (the session already has history), where one extra LLM call first rewrites the message into a self-contained search query from the last 3 turns (`core/src/model/prompts/search_query.txt`). The answer is still generated from, and history still records, the user's own words. If the rewrite fails, the message is searched as written
 - For RAG-enabled agents: embeds the query, searches the vector store, returns formatted listings
 - For non-RAG agents (`NullRagContextManager`): returns `""` instantly — no vector search
 

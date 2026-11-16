@@ -86,7 +86,7 @@ Answer (string or tokens) — every agent output and the merge pass through outp
 
 | Node | Does |
 |---|---|
-| `retrieve` | `rag_context_manager.get_context(prompt)` — vector search for RAG agents, `""` for `NullRagContextManager` |
+| `retrieve` | `rag_context_manager.get_context(query)` — vector search for RAG agents, `""` for `NullRagContextManager`. On a RAG agent's follow-up (the session has history) one extra LLM call first rewrites the message into a search query that carries the conversation's criteria (`core/src/model/prompts/search_query.txt`, last 3 turns); if it fails, the message is searched as written |
 | `generate` | system prompt + context + session history + prompt → LLM; runs tool calls in a loop (max `MAX_TOOL_CALLS = 5`) |
 
 Public methods: `ask()`, `aask()` (async), `ask_stream()`, `close()`. `ask`/`aask` and each tool call are `@traceable` (`agent.<name>`, `tool.<name>`). History comes from the `HistoryStore` (`SESSION_DB_FILE`), last `MAX_HISTORY_TURNS * 2` messages.

@@ -351,3 +351,90 @@ def test_compiled_graph_runs_both_sync_and_async_nodes():
     assert asyncio.run(model.aask("q", session_id="s")) == "async"
     llm.invoke.assert_called_once()
     llm.ainvoke.assert_awaited_once()
+
+
+# ----------------------------------------------------------------------
+# Follow-ups: the vector search runs on a query that carries the conversation
+# ----------------------------------------------------------------------
+
+class _ScriptedLlm:
+    """Replies with the scripted messages in order and records what it was sent."""
+
+    def __init__(self, *replies):
+        self._replies = list(replies)
+        self.calls = []
+
+    def invoke(self, messages):
+        self.calls.append(messages)
+        reply = self._replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return AIMessage(content=reply)
+
+    async def ainvoke(self, messages):
+        return self.invoke(messages)
+
+
+def _rag_model(llm, rag_enabled=True):
+    rag = MagicMock()
+    rag.get_context.return_value = "Listing 1"
+    with patch("core.src.model.llm_model_graph._mcp") as mcp:
+        mcp.langchain_tools.return_value = []
+        return LlmModelGraph(llm, system_prompt="p", rag_context_manager=rag, rag_enabled=rag_enabled), rag
+
+
+def _searched(rag):
+    return [call.args[0] for call in rag.get_context.call_args_list]
+
+
+def test_first_message_is_searched_as_written_without_an_extra_llm_call():
+    llm = _ScriptedLlm("Here are 2 flats.")
+    model, rag = _rag_model(llm)
+    model.ask("2-bedroom flat in Warsaw under 600000", session_id="s")
+    assert _searched(rag) == ["2-bedroom flat in Warsaw under 600000"]
+    assert len(llm.calls) == 1
+
+
+def test_follow_up_is_searched_with_the_criteria_of_the_conversation():
+    llm = _ScriptedLlm("Here are 2 flats.", "2-bedroom flat in Warsaw cheaper than 600000", "Here is 1 flat.")
+    model, rag = _rag_model(llm)
+    model.ask("2-bedroom flat in Warsaw under 600000", session_id="s")
+    assert model.ask("something cheaper?", session_id="s") == "Here is 1 flat."
+    assert _searched(rag)[1] == "2-bedroom flat in Warsaw cheaper than 600000"
+    rewrite = llm.calls[1][-1].content   # the rewrite sees the earlier turn and the new message
+    assert "User: 2-bedroom flat in Warsaw under 600000" in rewrite
+    assert "Assistant: Here are 2 flats." in rewrite
+    assert rewrite.endswith("Latest message: something cheaper?")
+    # the answer is still generated from the user's own words, and those are what is remembered
+    assert llm.calls[2][-1].content == "something cheaper?"
+    assert model._history.get("agent", "s")[2].content == "something cheaper?"
+
+
+def test_async_follow_up_is_searched_with_the_criteria_of_the_conversation():
+    llm = _ScriptedLlm("Here are 2 flats.", "flat in Kraków with a balcony", "Here is 1 flat.")
+    model, rag = _rag_model(llm)
+    asyncio.run(model.aask("flat in Kraków", session_id="s"))
+    asyncio.run(model.aask("with a balcony?", session_id="s"))
+    assert _searched(rag) == ["flat in Kraków", "flat in Kraków with a balcony"]
+
+
+def test_follow_up_is_searched_as_written_when_the_rewrite_fails_or_is_empty():
+    llm = _ScriptedLlm("first", RuntimeError("llm down"), "second", "  ", "third")
+    model, rag = _rag_model(llm)
+    model.ask("flat in Warsaw", session_id="s")
+    assert model.ask("cheaper?", session_id="s") == "second"
+    assert model.ask("bigger?", session_id="s") == "third"
+    assert _searched(rag) == ["flat in Warsaw", "cheaper?", "bigger?"]
+
+
+def test_agent_without_rag_never_rewrites_a_follow_up():
+    llm = _ScriptedLlm("first", "second")
+    model, rag = _rag_model(llm, rag_enabled=False)
+    model.ask("hello", session_id="s")
+    model.ask("and you?", session_id="s")
+    assert len(llm.calls) == 2
+
+
+def test_search_query_prompt_is_shipped():
+    from core.src.model.llm_model_graph import _SEARCH_QUERY_PROMPT_FILE
+    assert "search query" in _SEARCH_QUERY_PROMPT_FILE.read_text(encoding="utf-8")
