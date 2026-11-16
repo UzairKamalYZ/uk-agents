@@ -1,0 +1,38 @@
+# Look of the Streamlit chat UI (clients/streamlit/main.py).
+# Light and dark are both defined, so the appearance toggle in the app's settings menu works.
+
+[theme]
+font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+baseRadius = "14px"
+buttonRadius = "full"
+showSidebarBorder = true
+
+[theme.light]
+primaryColor = "#6C4DF6"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F1FF"
+textColor = "#1E1B2E"
+linkColor = "#5B3DF0"
+borderColor = "#E3DEF7"
+
+[theme.light.sidebar]
+backgroundColor = "#F8F6FF"
+secondaryBackgroundColor = "#ECE7FF"
+
+[theme.dark]
+primaryColor = "#9D8CFF"
+backgroundColor = "#0F0D1A"
+secondaryBackgroundColor = "#1B1830"
+textColor = "#ECEAF7"
+linkColor = "#B3A6FF"
+borderColor = "#2D2947"
+
+[theme.dark.sidebar]
+backgroundColor = "#0B0915"
+secondaryBackgroundColor = "#1B1830"
+
+[client]
+# No "Deploy" button; the settings menu (light/dark) stays
+toolbarMode = "minimal"

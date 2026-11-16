@@ -1,0 +1,20 @@
+# systemd user unit — keeps deployment/deploy.sh running (and so the services) across
+# crashes and reboots.  Assumes the repository is cloned at ~/uk-agents; edit the two
+# paths below if it lives elsewhere.  Install steps: deployment/README.md.
+
+[Unit]
+Description=uk-agents (REST API, Telegram bot, Streamlit UI — follows main)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/uk-agents
+ExecStart=%h/uk-agents/deployment/deploy.sh
+# uv, plus node/npx for the MCP servers (and claude, when ANTHROPIC_API=false)
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=10
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

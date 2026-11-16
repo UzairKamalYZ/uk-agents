@@ -3,6 +3,7 @@
 This file plays two roles: `python -m clients.streamlit.main` launches the Streamlit
 server on it, and Streamlit then re-runs it as the page script on every interaction.
 """
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,10 @@ from clients.base import BaseClient
 from core.src.config.config import Config
 
 AGENT_API_URL = f"{Config.REST_API_URL.rstrip('/')}/ask"
+_BOT = ":material/smart_toy:"
+_USER = ":material/person:"
+_COLOURS = ("violet", "blue", "green", "orange", "red")
+_CARDS_PER_ROW = 3
 
 
 def _get_agent_response(user_query: str) -> str:
@@ -42,21 +47,90 @@ def _get_agent_response(user_query: str) -> str:
             return f"Error: {e}"
 
 
-def _run_ui() -> None:
-    st.set_page_config(page_title="UK Agents", layout="wide")
-    st.title("UK Agents 🤖")
+def _agents() -> list[dict]:
+    """The enabled agents in agents.json — shown in the sidebar and as starter prompts."""
+    try:
+        specs = json.loads(Path(Config.AGENTS_FILE).read_text(encoding="utf-8"))["agents"]
+    except (OSError, ValueError, KeyError):
+        return []   # the chat still works without the list
+    return [spec for spec in specs if spec.get("enabled", True)]
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
+def _icon(agent: dict, position: int) -> str:
+    """The agent's icon, in one of the theme's accent colours (by position in the list)."""
+    return f":{_COLOURS[position % len(_COLOURS)]}[:material/{agent.get('icon', 'smart_toy')}:]"
+
+
+def _new_chat() -> None:
+    st.session_state.messages = []
+    st.session_state.pop("session_id", None)
+
+
+def _name(agent: dict) -> str:
+    return agent.get("display_name", agent["name"])
+
+
+def _sidebar(agents: list[dict]) -> None:
+    with st.sidebar:
+        st.title(":primary[UK] Agents", icon=_BOT)
+        st.caption("One chat, many agents. Your message goes to the one that can handle it.")
+        st.button("New chat", icon=":material/add_comment:", type="primary", width="stretch", on_click=_new_chat)
+        if agents:
+            st.subheader("Agents")
+        for position, agent in enumerate(agents):
+            st.markdown(f"{_icon(agent, position)} {_name(agent)}", help=agent.get("summary"))
+
+
+def _welcome(agents: list[dict]) -> str | None:
+    """The empty-chat screen: a card per agent with a prompt to try.  Returns the one picked."""
+    st.title("How can I :primary[help]?", text_alignment="center")
+    st.caption("Ask anything below, or start with one of these.", text_alignment="center")
+    st.space("small")
+    picked = None
+    starters = [(position, agent) for position, agent in enumerate(agents) if agent.get("example")]
+    for row_start in range(0, len(starters), _CARDS_PER_ROW):
+        row = starters[row_start:row_start + _CARDS_PER_ROW]
+        for column, (position, agent) in zip(st.columns(_CARDS_PER_ROW), row):
+            with column.container(border=True, height="stretch"):
+                st.markdown(f"{_icon(agent, position)} **{_name(agent)}**")
+                if st.button(agent["example"], key=f"starter_{agent['name']}", type="tertiary"):
+                    picked = agent["example"]
+    return picked
+
+
+def _show(message: dict) -> None:
+    is_user = message["role"] == "user"
+    with st.chat_message(message["role"], avatar=_USER if is_user else _BOT):
+        if message["content"].startswith("Error:"):
+            st.error(message["content"], icon=":material/error:")
+        else:
             st.markdown(message["content"])
 
-    if prompt := st.chat_input("How can I help?"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.messages.append({"role": "assistant", "content": _get_agent_response(prompt)})
-        st.rerun()
+
+def _run_ui() -> None:
+    st.set_page_config(page_title="UK Agents", page_icon=_BOT)
+    st.session_state.setdefault("messages", [])
+    agents = _agents()
+    _sidebar(agents)
+
+    prompt = st.chat_input("Message UK Agents", submit_mode="disable")
+    if not st.session_state.messages:
+        welcome = st.empty()
+        with welcome.container():
+            prompt = _welcome(agents) or prompt
+        if prompt:
+            welcome.empty()
+
+    for message in st.session_state.messages:
+        _show(message)
+
+    if prompt:
+        user_message = {"role": "user", "content": prompt}
+        _show(user_message)
+        with st.chat_message("assistant", avatar=_BOT):
+            reply = {"role": "assistant", "content": _get_agent_response(prompt)}
+        st.session_state.messages += [user_message, reply]
+        st.rerun()   # redraw from history, so the reply renders like every other message
 
 
 class StreamlitClient(BaseClient):

@@ -15,6 +15,7 @@ uk-agents/
 ├── .env / .env-template        # Runtime configuration (project root — always here)
 ├── agents.json                 # Agent registry (orchestrator reads it at startup)
 ├── mcp.json                    # MCP server registry
+├── .streamlit/config.toml      # Streamlit UI theme (light + dark)
 ├── pyproject.toml / uv.lock    # Dependencies (uv); pytest config (testpaths)
 ├── logging_config.py           # setup_logging() → terminal + logs/agent.log (rotating)
 ├── core/src/                   # Shared infrastructure
@@ -51,6 +52,7 @@ uk-agents/
 │   ├── nodes/                  # router, agent, synthesiser, confirmation
 │   └── prompts/                # router.txt, synthesiser.txt, confirmation.txt
 ├── clients/                    # base.py (BaseClient) + rest/, streamlit/, telegram/, cron/
+├── deployment/                 # deploy.sh — runs the clients, redeploys on every merge to main (see its README.md)
 └── logs/agent.log              # Unified runtime log
 ```
 
@@ -202,7 +204,7 @@ Streaming format (SSE): each chunk is sent as `data: {chunk}\n\n`. When `API_KEY
 ### Adding a New Agent
 
 1. `agents/<name>/agent.py`: subclass `BaseAgent`; prompt in `agents/<name>/prompts/System_Prompt.txt` (picked up automatically). Override a hook only when its default doesn't fit.
-2. Register it in `agents.json`: `name`, `class`, `description` (what the router routes on), `enabled`, `rag`, optional `display_name`, `summary` (shown by the conversational agent), `remarks` (Telegram waiting lines), `llm_model` / `llm_provider`.
+2. Register it in `agents.json`: `name`, `class`, `description` (what the router routes on), `enabled`, `rag`, optional `display_name`, `summary` (shown by the conversational agent), `icon` (Material Symbols name) and `example` (starter prompt) for the Streamlit UI, `remarks` (Telegram waiting lines), `llm_model` / `llm_provider`.
 3. Add tests under `agents/<name>/tests/`.
 4. If it answers outside `LlmModelGraph`, override both `ask()` and `aask()`.
 5. If it must run on its own, add `agents/<name>/main.py` (call `setup_logging()` first; `run_service()` in `core/src/utils.py`).

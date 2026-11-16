@@ -41,3 +41,6 @@ expenses/
 /
 # Chat history (core/src/model/session_manager.py)
 sessions.db*
+
+# Deployment runtime state (deployment/deploy.sh)
+deployment/.run/

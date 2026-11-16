@@ -647,7 +647,7 @@ class BaseClient(ABC):
 | Client | Entry point | Transport | Notes |
 |---|---|---|---|
 | `RestClient` | `clients/rest/main.py` | FastAPI + SSE (port 8000) | Optional `X-API-Key` auth; `session_id` continues a conversation |
-| `StreamlitClient` | `clients/streamlit/main.py` | Web UI (port 8501) | Calls the REST API (start it first); keeps the returned `session_id`, so a browser chat is one conversation |
+| `StreamlitClient` | `clients/streamlit/main.py` | Web UI (port 8501) | Calls the REST API (start it first); keeps the returned `session_id`, so a browser chat is one conversation. The sidebar and the welcome screen's starter prompts come from `agents.json`; colours and fonts from `.streamlit/config.toml` (light and dark) |
 | `TelegramClient` | `clients/telegram/main.py` | Telegram long-polling | Per-chat session; text and voice notes; announces the working agent |
 | `CronClient` | `clients/cron/main.py` | Scheduled loop | Fires `CRON_SEARCH_PROMPT` every 30 min |
 | `WhatsAppListener` | `agents/whatsapp/main.py` | Green API polling | Standalone — does not use OrchestratorAgent |
@@ -888,6 +888,10 @@ python -m agents.mails.main
 
 Requires `MAIL_ACCOUNTS` to be set in `.env`. Set `MAIL_SUMMARY_WHATSAPP_GROUP_ID` to deliver the digest to a WhatsApp group; leave it empty to write to the log instead.
 
+### Deploying to a server
+
+`deployment/deploy.sh` runs the REST API, Telegram bot and Streamlit UI together, watches GitHub, and redeploys whenever something is merged to `main`. See [deployment/README.md](deployment/README.md).
+
 ---
 
 ## Adding an MCP Server
@@ -948,11 +952,13 @@ class MyAgent(BaseAgent):
   "rag": false,
   "display_name": "My Agent",
   "summary": "One line the conversational agent uses when asked what the bot can do.",
+  "icon": "bolt",
+  "example": "A prompt the Streamlit welcome screen offers for this agent",
   "remarks": ["A line Telegram shows while the agent works…"]
 }
 ```
 
-`description` is what the router routes on; `display_name`, `summary` and `remarks` are optional and only shown to users.
+`description` is what the router routes on; `display_name`, `summary`, `icon` (a [Material Symbols](https://fonts.google.com/icons) name), `example` and `remarks` are optional and only shown to users.
 
 Every agent uses `LLM_PROVIDER` / `LLM_MODEL_NAME` from `.env`. To give one agent a different model, add `"llm_model": "claude-haiku-5-5"` (and optionally `"llm_provider"`) to its entry.
 
