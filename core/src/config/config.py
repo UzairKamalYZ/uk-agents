@@ -81,6 +81,8 @@ class Config:
     # Expense ledger + input log — kept outside the project in the user data dir;
     # a relative EXPENSES_DIR is resolved from the project root, "~" is expanded
     EXPENSES_DIR = _data_path("EXPENSES_DIR", _user_data_dir() / "expenses")
+    # The Streamlit UI's saved chat (resumed by every new browser session until "New chat")
+    STREAMLIT_CHAT_FILE = _data_path("STREAMLIT_CHAT_FILE", _user_data_dir() / "streamlit" / "chat.json")
     # FBR (Pakistan) tax filing — the project holding the fbr-iris-filing skill and its snapshots/;
     # a relative path is resolved from the project root, "~" is expanded
     FBR_TAX_DIR = _data_path("FBR_TAX_DIR", "~/work/fbr-tax-filing")

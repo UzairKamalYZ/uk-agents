@@ -18,6 +18,7 @@ import streamlit as st
 from streamlit import runtime
 
 from clients.base import BaseClient
+from clients.streamlit.chat_store import ChatStore
 from core.src.config.config import Config
 
 AGENT_API_URL = f"{Config.REST_API_URL.rstrip('/')}/ask"
@@ -25,6 +26,7 @@ _BOT = ":material/smart_toy:"
 _USER = ":material/person:"
 _COLOURS = ("violet", "blue", "green", "orange", "red")
 _CARDS_PER_ROW = 3
+_STORE = ChatStore(Config.STREAMLIT_CHAT_FILE)
 _DISCLAIMER = (
     "Private tool, built for Uzair Kamal's personal use only. "
     "It is not a general-purpose or public service."
@@ -68,6 +70,17 @@ def _icon(agent: dict, position: int) -> str:
 def _new_chat() -> None:
     st.session_state.messages = []
     st.session_state.pop("session_id", None)
+    _STORE.clear()
+
+
+def _resume_chat() -> None:
+    """On a new browser session, pick up the saved chat (see chat_store.py)."""
+    if "messages" in st.session_state:
+        return
+    saved = _STORE.load()
+    st.session_state.messages = saved.messages
+    if saved.session_id:
+        st.session_state["session_id"] = saved.session_id
 
 
 def _name(agent: dict) -> str:
@@ -118,7 +131,7 @@ def _show(message: dict) -> None:
 
 def _run_ui() -> None:
     st.set_page_config(page_title="UK Agents", page_icon=_BOT)
-    st.session_state.setdefault("messages", [])
+    _resume_chat()
     agents = _agents()
     _sidebar(agents)
 
@@ -140,6 +153,7 @@ def _run_ui() -> None:
         with st.chat_message("assistant", avatar=_BOT):
             reply = {"role": "assistant", "content": _get_agent_response(prompt)}
         st.session_state.messages += [user_message, reply]
+        _STORE.save(st.session_state.get("session_id"), st.session_state.messages)
         st.rerun()   # redraw from history, so the reply renders like every other message
 
 

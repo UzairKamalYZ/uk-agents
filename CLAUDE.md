@@ -102,7 +102,7 @@ All clients implement `BaseClient` (`start()` blocks until stopped, `stop()`, co
 | Client | Backend call | Notes |
 |---|---|---|
 | REST (`:8000`) | `aask` / `astream` | `session_id` param continues a conversation; SSE streaming |
-| Streamlit (`:8501`) | HTTP → REST `/ask` | Needs the REST API running (`REST_API_URL`; sends `API_KEY` as `X-API-Key` when set); keeps the returned `session_id`, so a browser chat is one conversation |
+| Streamlit (`:8501`) | HTTP → REST `/ask` | Needs the REST API running (`REST_API_URL`; sends `API_KEY` as `X-API-Key` when set); keeps the returned `session_id`, so a browser chat is one conversation; the chat is saved to `STREAMLIT_CHAT_FILE` (`clients/streamlit/chat_store.py`) and resumed by every new browser session until "New chat" |
 | Telegram | `aask(..., on_route=…)` | Per-chat session; voice notes (faster-whisper); shows "🤖 <Agent> is working…" |
 | Cron | `ask` | Sends `CRON_SEARCH_PROMPT` every 30 minutes |
 
@@ -140,6 +140,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `WHISPER_MODEL` | `small` | faster-whisper size for voice notes |
 | `API_KEY` | _(empty — auth off)_ | REST API key (`X-API-Key` header) |
 | `REST_API_URL` | `http://localhost:8000` | Where the Streamlit UI finds the REST API |
+| `STREAMLIT_CHAT_FILE` | per-user data dir `/streamlit/chat.json` | The Streamlit UI's saved chat, resumed by every new browser session until "New chat" |
 | `CRON_SEARCH_PROMPT` | 2-bed Poland < 1000 | Cron job prompt |
 | `EXPENSES_DIR` | per-user data dir | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `%APPDATA%\uk-agents\expenses` (Windows) |
 | `FBR_TAX_DIR` | `~/work/fbr-tax-filing` | Project holding the `fbr-iris-filing` skill |

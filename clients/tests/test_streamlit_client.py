@@ -193,6 +193,16 @@ class TestChatPage(unittest.TestCase):
         self.assertIn(_DISCLAIMER, [c.value for c in at.caption])
         self.assertIn("Uzair Kamal", _DISCLAIMER)
 
+    def test_reloaded_page_resumes_the_chat_until_new_chat(self):
+        with patch("requests.get", return_value=self._reply("Hello again.")):
+            at = self._page().run(timeout=30)
+            at.chat_input[0].set_value("hi").run(timeout=30)
+        reloaded = self._page().run(timeout=30)   # a new browser session
+        self.assertEqual([m.markdown[0].value for m in reloaded.chat_message], ["hi", "Hello again."])
+        self.assertEqual(reloaded.session_state["session_id"], "abc")
+        reloaded.sidebar.button[0].click().run(timeout=30)   # "New chat"
+        self.assertEqual(list(self._page().run(timeout=30).chat_message), [])
+
     def test_starter_prompt_is_asked_and_new_chat_clears_the_conversation(self):
         with patch("requests.get", return_value=self._reply("I can do many things.")) as mock_get:
             at = self._page().run(timeout=30)
