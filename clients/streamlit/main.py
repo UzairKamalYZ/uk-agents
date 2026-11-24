@@ -31,6 +31,25 @@ _DISCLAIMER = (
     "Private tool, built for Uzair Kamal's personal use only. "
     "It is not a general-purpose or public service."
 )
+# Keep everything inside the screen width on phones (also when embedded in the
+# my-stats "Agents" tab): wide tables and code scroll inside the message, long words
+# and starter prompts wrap, and the page itself never scrolls sideways.
+_MOBILE_CSS = """<style>
+[data-testid="stAppViewContainer"], [data-testid="stMain"],
+[data-testid="stAppScrollToBottomContainer"] { overflow-x: hidden; }
+[data-testid="stChatMessageContent"], [data-testid="stMarkdownContainer"] {
+  min-width: 0; max-width: 100%; overflow-wrap: anywhere;
+}
+[data-testid="stMarkdownContainer"] table { display: block; max-width: 100%; overflow-x: auto; }
+[data-testid="stMarkdownContainer"] pre { max-width: 100%; overflow-x: auto; }
+[data-testid="stButton"] button { max-width: 100%; }
+[data-testid="stButton"] button p { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  [data-testid="stMainBlockContainer"], [data-testid="stBottomBlockContainer"] {
+    padding-left: 1rem; padding-right: 1rem;
+  }
+}
+</style>"""
 
 
 def _get_agent_response(user_query: str) -> str:
@@ -131,6 +150,7 @@ def _show(message: dict) -> None:
 
 def _run_ui() -> None:
     st.set_page_config(page_title="UK Agents", page_icon=_BOT)
+    st.html(_MOBILE_CSS)
     _resume_chat()
     agents = _agents()
     _sidebar(agents)
