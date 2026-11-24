@@ -49,13 +49,16 @@ class _Bot:
             # Called on the orchestrator's loop as an agent is picked — edit the
             # placeholder on this loop; the edits are awaited before the answer.
             edit = sent.edit_text(f"{header}{self._working_text(entry)}")
-            status_edits.append(asyncio.wrap_future(asyncio.run_coroutine_threadsafe(edit, loop)))
+            # Keep the thread-safe future; wrapping it here would bind it to the
+            # orchestrator's loop. It is wrapped on this client's loop below.
+            status_edits.append(asyncio.run_coroutine_threadsafe(edit, loop))
 
         try:
             response = await self.local_agent.aask(
                 text, session_id=session_id, on_route=on_route
             )
-            for result in await asyncio.gather(*status_edits, return_exceptions=True):
+            edits = [asyncio.wrap_future(f) for f in status_edits]
+            for result in await asyncio.gather(*edits, return_exceptions=True):
                 if isinstance(result, Exception):
                     logger.warning("Could not show the working agent: %s", result)
             await sent.edit_text(f"{header}{response or 'No response generated.'}")
