@@ -24,3 +24,10 @@ class PineconeStore(VectorStore):
     def search(self, query_vector, k):
         results = self.index.query(vector=query_vector[0].tolist(), top_k=k, include_metadata=True)
         return [m["metadata"] for m in results["matches"]]
+
+    def list_ids(self):
+        return self.index.list()   # serverless indexes page through ids
+
+    def delete(self, ids):
+        for start in range(0, len(ids), 1000):   # Pinecone deletes at most 1000 ids per call
+            self.index.delete(ids=ids[start : start + 1000])

@@ -2,18 +2,19 @@
 
 `deploy.sh` runs uk-agents on a machine and keeps it on the latest `main`. One script, no extra tooling: it needs only `git` and `uv`.
 
-It starts three services:
+It starts four services:
 
 | Service | Command it runs | Reachable at |
 |---|---|---|
 | REST API | `uv run python -m clients.rest.main` | `http://<host>:8000` |
 | Telegram bot | `uv run python -m clients.telegram.main` | your bot, in Telegram |
 | Streamlit UI | `uv run python -m clients.streamlit.main` | `http://<host>:8501` |
+| Property crawler | `uv run python -m agents.property.crawler.main` | — (fills Pinecone every hour; see [docs/property-crawler.md](../docs/property-crawler.md)) |
 
 Then, every minute, it:
 
 1. restarts any service that has died;
-2. asks GitHub whether `main` has moved. If it has, it pulls the new commits, builds (`uv sync --locked`), runs the test suite, and restarts the three services on the new code.
+2. asks GitHub whether `main` has moved. If it has, it pulls the new commits, builds (`uv sync --locked`), runs the test suite, and restarts the services on the new code. With the crawler among the services, every build also runs `playwright install chromium`, so the browser always matches the Playwright version (it downloads only when that changed).
 
 A commit that fails to build or fails its tests is **not deployed**: the checkout is rolled back and the services keep running the last good version. The script tries again when `main` moves on.
 
@@ -26,6 +27,11 @@ On the machine that will run the services:
    - [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (it installs Python 3.13 itself)
    - Node.js with `npx` (the MCP servers in `mcp.json` are started with it)
    - Only when `ANTHROPIC_API=false`: the `claude` CLI, logged in
+   - For the property crawler, the system libraries Chromium needs (Ubuntu 22.04 / 24.04). After step 2, from the clone:
+
+     ```bash
+     uv sync && sudo .venv/bin/playwright install-deps chromium
+     ```
 
 2. Clone the repository into a folder used only for deployment, and leave it on `main`:
 
@@ -50,7 +56,7 @@ On the machine that will run the services:
 ./deployment/deploy.sh
 ```
 
-It stays in the foreground and prints what it does. Ctrl-C stops it and the three services.
+It stays in the foreground and prints what it does. Ctrl-C stops it and the services.
 
 ```
 2026-11-16 22:19:45 [deploy] building (uv sync)
@@ -93,7 +99,7 @@ nohup ./deployment/deploy.sh >> logs/deploy.log 2>&1 &
 
 ## Stop it
 
-Each of these stops the script and all three services.
+Each of these stops the script and all the services.
 
 | Started with | Stop with |
 |---|---|
@@ -101,7 +107,7 @@ Each of these stops the script and all three services.
 | `./deployment/deploy.sh` in a terminal | Ctrl-C in that terminal |
 | the `nohup` command | `pkill -TERM -f deployment/deploy.sh` |
 
-Allow up to a minute: each service gets `DEPLOY_STOP_TIMEOUT` seconds (default 20) to shut down before it is killed. Don't use `kill -9` on the script — that leaves the three services running without it.
+Allow up to a minute: each service gets `DEPLOY_STOP_TIMEOUT` seconds (default 20) to shut down before it is killed. Don't use `kill -9` on the script — that leaves the services running without it.
 
 With systemd, `stop` lasts until the next reboot. To keep it from starting again at boot:
 
@@ -114,8 +120,9 @@ systemctl --user disable uk-agents
 | File | What is in it |
 |---|---|
 | `logs/agent.log` | The application log of all services (rotating) |
-| `logs/deploy-rest.log`, `logs/deploy-telegram.log`, `logs/deploy-streamlit.log` | Raw output of each service since its last start — look here when a service won't start |
+| `logs/deploy-rest.log`, `logs/deploy-telegram.log`, `logs/deploy-streamlit.log`, `logs/deploy-crawler.log` | Raw output of each service since its last start — look here when a service won't start |
 | `logs/deploy-tests.log` | Output of the last test run — look here when a commit was not deployed |
+| `logs/deploy-playwright.log` | Output of the last `playwright install chromium` |
 
 ## Settings
 
@@ -123,7 +130,7 @@ Environment variables for `deploy.sh`; all optional.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DEPLOY_SERVICES` | `rest telegram streamlit` | Which clients to run. Each name is a folder in `clients/`, so a new client is deployed by adding its name here (e.g. `"rest telegram streamlit cron"`) |
+| `DEPLOY_SERVICES` | `rest telegram streamlit crawler` | Which services to run. `crawler` is the property crawler; every other name is a folder in `clients/`, so a new client is deployed by adding its name here (e.g. `"rest telegram streamlit crawler cron"`) |
 | `DEPLOY_BRANCH` | `main` | Branch to follow; the checkout must be on it |
 | `DEPLOY_REMOTE` | `origin` | Git remote to fetch from |
 | `DEPLOY_POLL_SECONDS` | `60` | How often to check GitHub and the services |
@@ -137,6 +144,7 @@ With systemd, set them in the unit file, for example `Environment=DEPLOY_SERVICE
 - **Only merges to `main` are deployed.** The script fast-forwards and never touches local changes; if the checkout has commits of its own that `main` doesn't, it stops updating and keeps running what it has. Don't develop in the deployment clone.
 - **A deploy restarts the services**, so they are unavailable for a few seconds, and a request in flight at that moment is cut off. Conversation history, expenses and paused confirmations are in SQLite files and survive.
 - **Changes to `.env` are not picked up automatically** — it is not in git. Restart after editing it (`systemctl --user restart uk-agents`, or Ctrl-C and run the script again).
-- **REST and Telegram each load their own copy of the agents** (embedding model, MCP servers; Telegram also loads Whisper). Allow roughly 2–3 GB of memory for the three services.
+- **REST and Telegram each load their own copy of the agents** (embedding model, MCP servers; Telegram also loads Whisper). The crawler loads the embedding model too, and runs Chromium during a pass. Allow roughly 3–4 GB of memory for the four services.
 - **The FBR tax agent drives Chrome on the same machine**, so it works only where a desktop Chrome with the Claude extension is available — not on a headless server. The other agents are unaffected.
-- **The WhatsApp listener, mail monitor and property crawler are not started.** They are separate services (`python -m agents.whatsapp.main`, `python -m agents.mails.main`, `python -m agents.property.crawler.main`), not clients; run them alongside if you use them. The crawler also needs `uv run playwright install chromium` once.
+- **The WhatsApp listener and mail monitor are not started.** They are separate services (`python -m agents.whatsapp.main`, `python -m agents.mails.main`), not clients; run them alongside if you use them.
+- **A deploy restarts the crawler**, which then starts a pass at once. That is cheap: it only embeds listings it hasn't seen. `DEPLOY_SERVICES="rest telegram streamlit"` leaves it out.

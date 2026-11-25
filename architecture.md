@@ -136,4 +136,4 @@ flowchart TB
     class AGENTSJSON,MCPJSON,LS config
 ```
 
-Property data is indexed into Pinecone offline by `agents.property.gatherers.pl_housing_data_collector` (CSV) and `agents.property.gatherers.data_collector` (URLs).
+Property data is indexed into Pinecone by the hourly crawler `agents.property.crawler.main` (Playwright, `agents/property/crawler/sites.json`); `agents.property.gatherers.data_collector` (URLs) is the older one-shot ingester.

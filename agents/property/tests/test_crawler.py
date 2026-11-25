@@ -11,6 +11,7 @@ from agents.property.crawler.extractor import Listing, extract_listings, next_pa
 from agents.property.crawler.fetcher import PlaywrightFetcher, RobotsChecker
 from agents.property.crawler.indexer import ListingIndexer
 from agents.property.crawler.main import CrawlerService
+from agents.property.crawler.purge import purge
 from agents.property.crawler.seen_store import SeenStore
 from agents.property.crawler.sites import Site, FieldSelector, load_sites
 from core.src.model.context_builder import build_context_from_listings
@@ -32,14 +33,15 @@ def _site(**overrides) -> Site:
         },
         next_page_selector="a.next",
         max_pages=5,
-        city="Warsaw",
+        city="Ghent",
         property_type="Apartment",
+        currency="EUR",
     )
     values.update(overrides)
     return Site(**values)
 
 
-def _card(n: int, price: str = "3 500 zł", city: str = "") -> str:
+def _card(n: int, price: str = "3 500 €", city: str = "") -> str:
     return (f'<article class="offer"><a href="/offer/{n}"><h2>Flat {n}</h2></a>'
             f'<span class="price">{price}</span><span class="rooms">2 rooms</span>'
             f'<span class="area">48,5 m²</span><span class="city">{city}</span></article>')
@@ -53,26 +55,26 @@ def _page(cards: list[str], next_href: str | None = None) -> str:
 # --- extraction -------------------------------------------------------------
 
 @pytest.mark.parametrize("text, expected", [
-    ("3 500 zł", 3500), ("€1,250.50", 1250.5), ("1.200 PLN", 1200), ("48,5 m²", 48.5),
-    ("2 rooms", 2), ("PLN 4 200 / month", 4200), ("ask for price", None), ("", None), (None, None),
+    ("3 500 €", 3500), ("€1,250.50", 1250.5), ("1.200 EUR", 1200), ("48,5 m²", 48.5),
+    ("2 rooms", 2), ("EUR 4 200 / month", 4200), ("ask for price", None), ("", None), (None, None),
 ])
 def test_parse_number_reads_european_and_english_formats(text, expected):
     assert parse_number(text) == expected
 
 
 def test_extract_listings_reads_fields_and_makes_links_absolute():
-    [listing] = extract_listings(_page([_card(7, city="Kraków")]), _site(), "https://portal.example/rent?page=1")
+    [listing] = extract_listings(_page([_card(7, city="Liège")]), _site(), "https://portal.example/rent?page=1")
     assert listing.url == "https://portal.example/offer/7"
     assert (listing.title, listing.price, listing.rooms, listing.area) == ("Flat 7", 3500, 2, 48.5)
-    assert listing.city == "Kraków"
+    assert listing.city == "Liège"
     assert listing.property_type == "Apartment"
-    assert "Flat 7. Apartment in Kraków. Price 3500 PLN. 2 rooms. 48.5 square meters." in listing.text
+    assert "Flat 7. Apartment in Liège. Price 3500 EUR. 2 rooms. 48.5 square meters." in listing.text
 
 
 def test_extract_listings_falls_back_to_the_site_city_and_counts_a_repeated_ad_once():
     listings = extract_listings(_page([_card(1), _card(1)]), _site(), "https://portal.example/rent")
     assert len(listings) == 1
-    assert listings[0].city == "Warsaw"
+    assert listings[0].city == "Ghent"
 
 
 def test_card_without_a_link_gets_a_stable_url_from_its_text():
@@ -238,7 +240,7 @@ def test_second_pass_indexes_only_new_listings_and_stops_paging_at_known_ones(tm
 def test_a_price_change_is_reindexed(tmp_path):
     pages = {BASE + "1": _page([_card(1)])}
     _crawler(tmp_path, [_site()], FakeFetcher(pages), FakeIndexer()).run_once()
-    pages[BASE + "1"] = _page([_card(1, price="3 200 zł")])
+    pages[BASE + "1"] = _page([_card(1, price="3 200 €")])
     indexer = FakeIndexer()
     _crawler(tmp_path, [_site()], FakeFetcher(pages), indexer).run_once()
     assert [l.price for l in indexer.indexed] == [3200]
@@ -326,6 +328,30 @@ def test_indexer_upserts_in_batches_with_listing_metadata():
     assert embedder.save_vectors_in_store.call_count == 3
 
 
+# --- purge ------------------------------------------------------------------
+
+def test_purge_deletes_only_vectors_the_crawler_did_not_write():
+    store = MagicMock()
+    store.list_ids.return_value = iter([["crawl-abc", "123", "456"], ["crawl-def", "789"]])
+    assert purge(store, delete=True) == 3
+    store.delete.assert_called_once_with(["123", "456", "789"])
+
+
+def test_purge_dry_run_deletes_nothing():
+    store = MagicMock()
+    store.list_ids.return_value = iter([["1", "crawl-x"]])
+    assert purge(store, delete=False) == 1
+    store.delete.assert_not_called()
+
+
+def test_pinecone_store_deletes_in_chunks_of_1000():
+    from core.src.persistence.pinecone_store import PineconeStore
+    store = PineconeStore.__new__(PineconeStore)
+    store.index = MagicMock()
+    store.delete([str(i) for i in range(2500)])
+    assert [len(c.kwargs["ids"]) for c in store.index.delete.call_args_list] == [1000, 1000, 500]
+
+
 # --- service ----------------------------------------------------------------
 
 def test_service_runs_a_pass_with_the_configured_files(tmp_path):
@@ -354,11 +380,22 @@ def test_service_stop_ends_start():
 # --- what the property agent sees -------------------------------------------
 
 def test_context_shows_the_listing_link_and_its_currency():
-    context = build_context_from_listings([{"city": "Berlin", "price": 1200, "currency": "EUR",
+    context = build_context_from_listings([{"city": "Berlin", "price": 1200.0, "currency": "EUR",
                                             "url": "https://portal.example/offer/1", "text": "Flat"}])
+    assert "Location: Berlin" in context
     assert "Price: 1200 EUR" in context
     assert "Link: https://portal.example/offer/1" in context
-    assert "Price: 900 PLN" in build_context_from_listings([{"price": 900}])
+
+
+def test_context_leaves_out_fields_a_listing_does_not_have():
+    context = build_context_from_listings([{"price": 900, "rooms": float("nan")}])
+    assert context == "Listing 1\nPrice: 900"
+    assert build_context_from_listings([]) == "No listings found."
+
+
+def test_a_site_without_a_currency_shows_the_bare_price():
+    [listing] = extract_listings(_page([_card(1)]), _site(currency=None), "https://portal.example/")
+    assert "Price 3500." in listing.text and "currency" not in listing.metadata("now")
 
 
 # --- real browser -----------------------------------------------------------

@@ -2,10 +2,12 @@
 
 `agents/property/crawler/` keeps the property agent's Pinecone index fresh. Every hour it visits the websites in `sites.json` one at a time. It renders each listing page in headless Chromium (Playwright) so JavaScript-built pages work, reads the listing cards with CSS selectors, and upserts every **new or changed** listing into the same index the property agent searches.
 
+It runs on the Ubuntu server as one of the services of `deployment/deploy.sh` (see [Running it on the server](#running-it-on-the-server)). By hand:
+
 ```bash
-uv run playwright install chromium                 # once per machine (add --with-deps on a bare Linux server)
+uv run playwright install chromium                 # the browser (deploy.sh does this on every build)
 python -m agents.property.crawler.main             # a pass now, then every CRAWLER_INTERVAL_MINUTES
-python -m agents.property.crawler.main --once      # one pass, then exit (for a system crontab)
+python -m agents.property.crawler.main --once      # one pass, then exit
 ```
 
 ## One pass
@@ -38,7 +40,7 @@ for each enabled site in sites.json (in order):
   "sites": [
     {
       "name": "my-portal",
-      "start_urls": ["https://portal.example/rent/warsaw?sort=newest"],
+      "start_urls": ["https://portal.example/rent/apartments?sort=newest"],
       "listing_selector": "article.listing",
       "fields": {
         "title": "h2",
@@ -51,7 +53,7 @@ for each enabled site in sites.json (in order):
       },
       "next_page_selector": "a[rel=next]",
       "max_pages": 3,
-      "currency": "PLN",
+      "currency": "EUR",
       "property_type": "Apartment"
     }
   ]
@@ -63,7 +65,7 @@ for each enabled site in sites.json (in order):
 | `name` | required | Shown in logs, stored as the `site` metadata |
 | `start_urls` (or `url`) | required | Listing pages to start from. Sort them newest first, so `stop_when_seen` can stop early |
 | `listing_selector` | required | CSS selector matching one listing card |
-| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr"}` for an attribute. `price`, `rooms` and `area` are parsed into numbers (`3 500 zł` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description` and `url` are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
+| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr"}` for an attribute. `price`, `rooms` and `area` are parsed into numbers (`3 500 €` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description` and `url` are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
 | `link_selector` | `a[href]` | Link to the listing inside the card. It is the listing's identity. A card without a link gets an ID from its text |
 | `next_page_selector` | none | Link to the next results page |
 | `max_pages` | `1` | Pages followed per start URL |
@@ -71,14 +73,25 @@ for each enabled site in sites.json (in order):
 | `scrolls` | `0` | Scroll to the bottom this many times first (infinite-scroll sites) |
 | `stop_when_seen` | `true` | Stop paging when a page has no new or changed listing |
 | `city`, `property_type` | none | Used when the card doesn't name one |
-| `currency` | `PLN` | Shown with the price |
+| `currency` | none | Shown with the price, e.g. `EUR` |
 | `enabled` | `true` | `false` keeps the entry without crawling it |
 
 The shipped `sites.json` holds one disabled example. To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
 
 ## What lands in Pinecone
 
-Each listing is embedded as text, for example `Sunny 2-bed. Apartment in Warsaw. Price 3400 PLN. 2 rooms. 52 square meters. …`. The text comes with metadata that `core/src/model/context_builder.py` shows the agent: `text`, `city`, `price`, `currency`, `rooms`, `squareMeters`, `type` and `url` (shown to the agent as `Link:`), plus `source: "crawler"`, `site`, `title`, `crawled_at` and any extra fields. Crawled listings share the default namespace with the CSV data, so the property agent searches both at once.
+Each listing is embedded as text, for example `Sunny 2-bed. Apartment in Ghent. Price 1150 EUR. 2 rooms. 52 square meters. …`. The text comes with metadata that `core/src/model/context_builder.py` shows the agent: `text`, `city`, `price`, `currency`, `rooms`, `squareMeters`, `type` and `url` (shown to the agent as `Link:`), plus `source: "crawler"`, `site`, `title`, `crawled_at` (shown as `Last seen:`) and any extra fields.
+
+## Clearing out old data
+
+The property agent searches the whole index, so vectors written before the crawler (the old Polish CSV data) keep showing up until they are deleted. Every vector the crawler writes has an id starting with `crawl-`; this deletes all the others:
+
+```bash
+python -m agents.property.crawler.purge          # dry run: how many would go
+python -m agents.property.crawler.purge --yes    # delete them
+```
+
+It deletes from `PINECONE_INDEX_NAME`, in the default namespace, and can't be undone.
 
 ## Settings
 
@@ -99,5 +112,21 @@ Pinecone and the embedding model come from the usual `PINECONE_*` and `SENTENCE_
 
 - **Check each site's terms of use.** Many listing portals forbid scraping. Some block headless browsers or show a CAPTCHA, and the crawler does not try to get around either. Such a site logs `no listings matched`.
 - **Listings are not removed** when they disappear from a site. `crawled_at` tells you how fresh a listing is.
-- **The crawler is not started by `deployment/deploy.sh`** (it runs clients only). Run it alongside, like the mail and WhatsApp monitors: `nohup uv run python -m agents.property.crawler.main >> logs/crawler.log 2>&1 &`, or add `--once` to a crontab line: `0 * * * * cd ~/uk-agents && uv run python -m agents.property.crawler.main --once`.
 - The older `agents/property/gatherers/data_collector.py` (requests + regex over `urls.txt`) still works for static pages without per-site selectors.
+
+## Running it on the server
+
+`deployment/deploy.sh` starts the crawler with the REST API, Telegram bot and Streamlit UI (service name `crawler`). It restarts the crawler if it dies and redeploys it on every merge to `main`. Every build also runs `playwright install chromium`, so the browser always matches the Playwright version in `uv.lock`. Set-up on Ubuntu (22.04 or 24.04), once, on top of [deployment/README.md](../deployment/README.md):
+
+```bash
+cd ~/uk-agents
+uv sync
+sudo .venv/bin/playwright install-deps chromium   # the system libraries Chromium needs (apt)
+uv run python -m agents.property.crawler.main --once   # try a pass; check logs/agent.log
+```
+
+- **No screen is needed.** `CRAWLER_HEADLESS=true` is the default. Leave it on: `false` needs a display, and the server has none.
+- **Run it as your normal user, not root.** The browser download goes to `~/.cache/ms-playwright` of the user running `deploy.sh`.
+- **Logs**: `logs/agent.log` (every pass, every site) and `logs/deploy-crawler.log` (the process's raw output). A failed browser download is in `logs/deploy-playwright.log`.
+- **Memory**: about 0.5–1 GB while a pass runs (embedding model plus Chromium). Chromium is closed between passes.
+- **To leave it out**, set `DEPLOY_SERVICES="rest telegram streamlit"`.

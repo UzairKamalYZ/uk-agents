@@ -36,7 +36,7 @@ uk-agents/
 │   └── speech/transcriber.py   # Local faster-whisper (Telegram voice notes)
 ├── agents/
 │   ├── conversational/         # Greetings, small talk; lists the other agents
-│   ├── property/               # RAG property search + ingestion (housing/, gatherers/, scraping/)
+│   ├── property/               # RAG property search + ingestion (crawler/, gatherers/, scraping/)
 │   │   └── crawler/            # Hourly Playwright crawler → Pinecone (sites.json, main.py)
 │   ├── finance/                # Stocks via the `stocks` MCP server
 │   ├── whatsapp/               # WhatsAppAgent + standalone group listener (main.py, Green API)
@@ -53,7 +53,7 @@ uk-agents/
 │   ├── nodes/                  # router, agent, synthesiser, confirmation
 │   └── prompts/                # router.txt, synthesiser.txt, confirmation.txt
 ├── clients/                    # base.py (BaseClient) + rest/, streamlit/, telegram/, cron/
-├── deployment/                 # deploy.sh — runs the clients, redeploys on every merge to main (see its README.md)
+├── deployment/                 # deploy.sh — runs the clients + property crawler on the Ubuntu server, redeploys on every merge to main (see its README.md)
 └── logs/agent.log              # Unified runtime log
 ```
 
@@ -130,7 +130,6 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `PINECONE_API_KEY` / `PINECONE_INDEX_NAME` | — | Pinecone key and index (created if missing: serverless, cosine, AWS us-east-1) |
 | `PROMPT_FILE` | `agents/property/prompts/System_Prompt.txt` | Property agent prompt (also `LlmModelGraph`'s fallback prompt) |
 | `URLS_FILE` | `agents/property/urls.txt` | URL list for `agents.property.gatherers.data_collector` — one per line, `#` comments allowed |
-| `HOUSING_DATASET_DIR` | `agents/property/datasets/pl-housing` | CSVs for `agents.property.gatherers.pl_housing_data_collector` |
 | `RAG_K` | `5` | Listings returned per vector search |
 | `MAX_HISTORY_TURNS` | `10` | Agent history window (turns) |
 | `SESSION_DB_FILE` | `sessions.db` | Agent chat history, the router's conversation memory, FBR session ids |
@@ -142,7 +141,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `API_KEY` | _(empty — auth off)_ | REST API key (`X-API-Key` header) |
 | `REST_API_URL` | `http://localhost:8000` | Where the Streamlit UI finds the REST API |
 | `STREAMLIT_CHAT_FILE` | per-user data dir `/streamlit/chat.json` | The Streamlit UI's saved chat, resumed by every new browser session until "New chat" |
-| `CRON_SEARCH_PROMPT` | 2-bed Poland < 1000 | Cron job prompt |
+| `CRON_SEARCH_PROMPT` | `Find new 2-bedroom apartments for rent` | Cron job prompt |
 | `EXPENSES_DIR` | per-user data dir | Folder for `expenses.db`. Empty → `~/Library/Application Support/uk-agents/expenses` (macOS), `~/.local/share/uk-agents/expenses` (Linux, honours `XDG_DATA_HOME`), `%APPDATA%\uk-agents\expenses` (Windows) |
 | `FBR_TAX_DIR` | `~/work/fbr-tax-filing` | Project holding the `fbr-iris-filing` skill |
 | `FBR_TAX_DATA_DIR` | per-user data dir `/fbr_tax` | The FBR agent's `filings.db` |
@@ -239,5 +238,6 @@ Create `clients/<name>/main.py` (+ `__init__.py`), implement `BaseClient`, call 
 - **The expense tracker is SQLite + in-process tools** (`agents/expenditure/ledger.py`, `tools.py`), not an MCP server — deliberately (see `docs/expenditure-tracker.md`).
 - **Anyone who can message the Telegram bot can use every agent**, including the expense tracker and FBR filing — there is no owner check.
 - **Tests never stub `sys.modules` for project code**: patch the names a test uses (`patch("clients.telegram.main.OrchestratorAgent")`). `core/tests/conftest.py` stubs only heavy third-party ML packages (sentence-transformers, pinecone).
-- **The property crawler needs a browser**: `uv run playwright install chromium` once per machine. Its tests use fake fetchers; the one real-Chromium test skips where no browser is installed.
+- **The property crawler needs a browser**: `deploy.sh` runs `playwright install chromium` on every build (the system libraries need `sudo .venv/bin/playwright install-deps chromium` once). Its tests use fake fetchers; the one real-Chromium test skips where no browser is installed.
+- **No Polish data**: the Polish CSV ingester was removed; the property index is fed by the crawler only (vector ids `crawl-…`). `python -m agents.property.crawler.purge --yes` deletes every other vector. Keep defaults and examples country-neutral.
 - **Pinned dependency**: `av<19` in `pyproject.toml` — faster-whisper 1.2.1 passes `av.open(metadata_errors=…)`, which PyAV 19 removed. Lift it when faster-whisper supports PyAV 19 (`core/tests/speech/test_transcriber.py` decodes a real voice note to catch this).

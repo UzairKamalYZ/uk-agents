@@ -13,6 +13,8 @@ from .sites import FieldSelector, Site
 
 MAX_DESCRIPTION_CHARS = 1000
 
+ID_PREFIX = "crawl-"   # every vector id the crawler writes starts with this
+
 _NUMBER = re.compile(r"\d[\d\s  .,']*")
 
 
@@ -25,7 +27,7 @@ class Listing:
     city: str | None = None
     price: float | None = None
     price_text: str = ""
-    currency: str = "PLN"
+    currency: str | None = None
     rooms: float | None = None
     area: float | None = None
     property_type: str | None = None
@@ -34,7 +36,7 @@ class Listing:
     @property
     def id(self) -> str:
         """Stable vector id: from the listing's URL, so re-crawling updates the same vector."""
-        return "crawl-" + hashlib.sha1(self.url.encode("utf-8")).hexdigest()[:32]
+        return ID_PREFIX + hashlib.sha1(self.url.encode("utf-8")).hexdigest()[:32]
 
     @property
     def text(self) -> str:
@@ -43,7 +45,7 @@ class Listing:
         where = f" in {self.city}" if self.city else ""
         parts.append(f"{self.property_type or 'Property'}{where}.")
         if self.price is not None:
-            parts.append(f"Price {_fmt(self.price)} {self.currency}.")
+            parts.append(f"Price {_fmt(self.price)}{' ' + self.currency if self.currency else ''}.")
         if self.rooms is not None:
             parts.append(f"{_fmt(self.rooms)} rooms.")
         if self.area is not None:
@@ -82,7 +84,7 @@ def _fmt(n: float) -> str:
 
 
 def parse_number(text: str | None) -> float | None:
-    """First number in text: '3 500 zł' → 3500, '€1,250.50' → 1250.5, '1.200 PLN' → 1200, '48,5 m²' → 48.5."""
+    """First number in text: '3 500 €' → 3500, '€1,250.50' → 1250.5, '1.200 EUR' → 1200, '48,5 m²' → 48.5."""
     if not text:
         return None
     match = _NUMBER.search(text)

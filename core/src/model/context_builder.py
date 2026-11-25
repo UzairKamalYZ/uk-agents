@@ -1,45 +1,43 @@
+_FIELDS = [
+    # (metadata key, label, suffix)
+    ("title", "Title", ""),
+    ("city", "Location", ""),
+    ("type", "Type", ""),
+    ("rooms", "Rooms", ""),
+    ("squareMeters", "Surface", " m²"),
+]
 
-def _format_amenities(listing: dict) -> str:
-    """Formats a listing's boolean amenities into a comma-separated string."""
-    amenities = [
-        "Parking" if listing.get("hasParkingSpace") else None,
-        "Balcony" if listing.get("hasBalcony") else None,
-        "Elevator" if listing.get("hasElevator") else None,
-        "Security" if listing.get("hasSecurity") else None,
-        "Storage" if listing.get("hasStorageRoom") else None,
-    ]
-    return ", ".join([a for a in amenities if a]) or "None"
+
+def _present(value) -> bool:
+    return value is not None and str(value).strip().lower() not in {"", "nan", "none"}
+
+
+def _fmt(value) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def build_context_from_listings(listings: list[dict]) -> str:
-    """Builds a formatted string context from a list of listing dictionaries."""
+    """Formats retrieved listings for the prompt; a field a listing doesn't have is left out."""
     if not listings:
         return "No listings found."
 
-    def safe(v, suffix=""):
-        if v is None or str(v) == "nan" or v == "":
-            return "N/A"
-        return f"{v}{suffix}"
-
     blocks = []
     for i, l in enumerate(listings, start=1):
-        blocks.append(
-            f"""
-Listing {i}
-Location: {safe(l.get("city"))}
-Price: {safe(l.get("price"), " " + (l.get("currency") or "PLN"))}
-Rooms: {safe(l.get("rooms"))}
-Surface: {safe(l.get("squareMeters"), " m²")}
-Floor: {safe(l.get("floor"))} / {safe(l.get("floorCount"))}
-Type: {safe(l.get("type"))}
-Ownership: {safe(l.get("ownership"))}
-Building material: {safe(l.get("buildingMaterial"))}
-Condition: {safe(l.get("condition"))}
-Amenities: {_format_amenities(l)}
-Description:
-{safe(l.get("text"))}
-""".strip()
-            + (f"\nLink: {l['url']}" if l.get("url") else "")
-        )
+        lines = [f"Listing {i}"]
+        for key, label, suffix in _FIELDS:
+            if _present(l.get(key)):
+                lines.append(f"{label}: {_fmt(l[key])}{suffix}")
+        if _present(l.get("price")):
+            currency = f" {l['currency']}" if _present(l.get("currency")) else ""
+            lines.append(f"Price: {_fmt(l['price'])}{currency}")
+        if _present(l.get("text")):
+            lines.append(f"Description:\n{l['text']}")
+        if _present(l.get("url")):
+            lines.append(f"Link: {l['url']}")
+        if _present(l.get("crawled_at")):
+            lines.append(f"Last seen: {l['crawled_at']}")
+        blocks.append("\n".join(lines))
 
     return "\n\n".join(blocks)

@@ -32,7 +32,7 @@ class Site:
     scrolls: int = 0                   # scroll to the bottom this many times (lazy-loaded cards)
     stop_when_seen: bool = True        # stop paging once a page holds nothing new
     city: str | None = None            # used when a card names no city
-    currency: str = "PLN"
+    currency: str | None = None       # e.g. "EUR"; shown with the price
     property_type: str | None = None   # used when a card names no type
     enabled: bool = True
 
@@ -59,7 +59,7 @@ def _site(raw: dict) -> Site:
         scrolls=int(raw.get("scrolls", 0)),
         stop_when_seen=bool(raw.get("stop_when_seen", True)),
         city=raw.get("city"),
-        currency=raw.get("currency", "PLN"),
+        currency=raw.get("currency"),
         property_type=raw.get("property_type"),
         enabled=bool(raw.get("enabled", True)),
     )

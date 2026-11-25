@@ -3,7 +3,7 @@
     {
       "name": "example-portal",
       "enabled": false,
-      "start_urls": ["https://www.example.com/rent/apartments/warsaw?sort=newest"],
+      "start_urls": ["https://www.example.com/rent/apartments?sort=newest"],
       "listing_selector": "article.listing",
       "link_selector": "a[href]",
       "fields": {
@@ -15,7 +15,7 @@
       },
       "next_page_selector": "a[rel=next]",
       "max_pages": 3,
-      "currency": "PLN",
+      "currency": "EUR",
       "property_type": "Apartment"
     }
   ]

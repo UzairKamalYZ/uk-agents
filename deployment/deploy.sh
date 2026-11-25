@@ -2,7 +2,7 @@
 #
 # deployment/deploy.sh — run uk-agents and keep it on the latest main.
 #
-# Starts the services (REST API, Telegram bot, Streamlit UI), then every
+# Starts the services (REST API, Telegram bot, Streamlit UI, property crawler), then every
 # DEPLOY_POLL_SECONDS:
 #   - restarts any service that has died;
 #   - asks GitHub whether main has moved; if it has: pulls it, builds (uv sync),
@@ -26,7 +26,7 @@ main() {
     REMOTE="${DEPLOY_REMOTE:-origin}"
     BRANCH="${DEPLOY_BRANCH:-main}"
     POLL_SECONDS="${DEPLOY_POLL_SECONDS:-60}"
-    SERVICES="${DEPLOY_SERVICES:-rest telegram streamlit}"   # each is clients/<name>/main.py
+    SERVICES="${DEPLOY_SERVICES:-rest telegram streamlit crawler}"   # see module_of
     RUN_TESTS="${DEPLOY_RUN_TESTS:-true}"
     STOP_TIMEOUT="${DEPLOY_STOP_TIMEOUT:-20}"
     RUN_DIR="$REPO_DIR/deployment/.run"
@@ -94,8 +94,16 @@ preflight() {
     [ -f "$REPO_DIR/.env" ] || die "no .env in $REPO_DIR (cp .env-template .env and fill it in)"
     local name
     for name in $SERVICES; do
-        [ -f "$REPO_DIR/clients/$name/main.py" ] || die "unknown service '$name' (no clients/$name/main.py)"
+        [ -f "$REPO_DIR/$(module_of "$name" | tr . /).py" ] || die "unknown service '$name' (no $(module_of "$name" | tr . /).py)"
     done
+}
+
+# The Python module a service runs: a client is clients/<name>/main.py.
+module_of() {
+    case "$1" in
+        crawler) echo "agents.property.crawler.main" ;;
+        *) echo "clients.$1.main" ;;
+    esac
 }
 
 # Ask the remote for the latest commit of the branch. A failed fetch (GitHub or the
@@ -115,7 +123,16 @@ pull() { git merge --quiet --ff-only "$REMOTE/$BRANCH"; }
 
 build() {
     log "building (uv sync)"
-    uv sync --locked --quiet
+    uv sync --locked --quiet || return 1
+    case " $SERVICES " in
+        *" crawler "*)
+            # The Chromium build that this Playwright version expects; downloads only when it changed.
+            # A failure leaves the crawler failing its passes, not the other services undeployed.
+            uv run --no-sync playwright install chromium >"$LOG_DIR/deploy-playwright.log" 2>&1 ||
+                log "WARNING: playwright install chromium failed — see logs/deploy-playwright.log"
+            ;;
+    esac
+    return 0
 }
 
 run_tests() {
@@ -138,7 +155,7 @@ start() {
     # Output of the current run only; the application's own history is in logs/agent.log
     : >"$LOG_DIR/deploy-$1.log"
     set -m   # its own process group, so stopping the service stops its children too
-    uv run --no-sync python -m "clients.$1.main" >>"$LOG_DIR/deploy-$1.log" 2>&1 &
+    uv run --no-sync python -m "$(module_of "$1")" >>"$LOG_DIR/deploy-$1.log" 2>&1 &
     set +m
     echo $! >"$RUN_DIR/$1.pid"
     log "started $1 (pid $!)"
