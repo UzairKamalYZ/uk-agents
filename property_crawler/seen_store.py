@@ -1,7 +1,13 @@
 """
 SQLite record of every listing the crawler has indexed, so each hourly pass embeds
 only what is new or changed.
+
+The `listings` table also keeps each listing's details (title, price, city, deal,
+availability, …) so other apps can list and filter them without the vector index —
+my-stats' Properties page reads it read-only. Those columns are a contract: see
+README.md → "The listings table".
 """
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,7 +43,25 @@ class SeenStore:
                    reason TEXT NOT NULL
                )"""
         )
+        self._migrate()
         self._conn.commit()
+
+    # Listing details, added after the first version of the table: (column, SQL type)
+    DETAIL_COLUMNS = [
+        ("title", "TEXT"), ("description", "TEXT"), ("city", "TEXT"), ("postcode", "TEXT"),
+        ("price", "REAL"), ("price_text", "TEXT"), ("currency", "TEXT"), ("rooms", "REAL"),
+        ("area", "REAL"), ("property_type", "TEXT"), ("deal", "TEXT"), ("availability", "TEXT"),
+        ("photo", "TEXT"), ("extra", "TEXT"),          # extra: JSON object of the site's other fields
+        ("updated_at", "TEXT"),                         # when the details last changed
+    ]
+
+    def _migrate(self) -> None:
+        """Add the detail columns to a seen.db made before they existed (rows keep NULL until re-seen)."""
+        have = {row[1] for row in self._conn.execute("PRAGMA table_info(listings)")}
+        for name, sql_type in self.DETAIL_COLUMNS:
+            if name not in have:
+                self._conn.execute(f"ALTER TABLE listings ADD COLUMN {name} {sql_type}")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS listings_first_seen ON listings (first_seen)")
 
     # --- back-off ------------------------------------------------------------
 
@@ -86,15 +110,41 @@ class SeenStore:
         return fresh
 
     def touch(self, listings: list[Listing], when: str | None = None) -> None:
-        """Mark listings as seen now (call after they are safely in the vector store)."""
+        """Store new or changed listings with their details, seen now (call after they are safely
+        in the vector store). first_seen is kept from the first time a listing was stored."""
         when = when or utc_now()
+        rows = []
+        for l in listings:
+            rows.append((
+                l.id, l.site, l.url, l.content_hash(), when, when,
+                l.title or None, l.description or None, l.city, l.postcode, l.price, l.price_text or None,
+                l.currency, l.rooms, l.area, l.property_type, l.deal, l.availability, l.photo,
+                json.dumps(l.extra, ensure_ascii=False) if l.extra else None, when,
+            ))
         self._conn.executemany(
-            """INSERT INTO listings (id, site, url, content_hash, first_seen, last_seen)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET content_hash = excluded.content_hash,
-                                             last_seen = excluded.last_seen""",
-            [(l.id, l.site, l.url, l.content_hash(), when, when) for l in listings],
+            """INSERT INTO listings (id, site, url, content_hash, first_seen, last_seen,
+                   title, description, city, postcode, price, price_text, currency, rooms, area,
+                   property_type, deal, availability, photo, extra, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   content_hash = excluded.content_hash, last_seen = excluded.last_seen,
+                   url = excluded.url, title = excluded.title, description = excluded.description,
+                   city = excluded.city, postcode = excluded.postcode, price = excluded.price,
+                   price_text = excluded.price_text, currency = excluded.currency, rooms = excluded.rooms,
+                   area = excluded.area, property_type = excluded.property_type, deal = excluded.deal,
+                   availability = excluded.availability, photo = excluded.photo, extra = excluded.extra,
+                   updated_at = excluded.updated_at""",
+            rows,
         )
+        self._conn.commit()
+
+    def seen_again(self, listings: list[Listing], when: str | None = None) -> None:
+        """Unchanged listings still on the site: only last_seen moves."""
+        if not listings:
+            return
+        when = when or utc_now()
+        self._conn.executemany("UPDATE listings SET last_seen = ? WHERE id = ?",
+                               [(when, l.id) for l in listings])
         self._conn.commit()
 
     def count(self, site: str | None = None) -> int:

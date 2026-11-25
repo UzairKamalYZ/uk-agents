@@ -15,3 +15,9 @@ def test_context_leaves_out_fields_a_listing_does_not_have():
     context = build_context_from_listings([{"price": 900, "rooms": float("nan")}])
     assert context == "Listing 1\nPrice: 900"
     assert build_context_from_listings([]) == "No listings found."
+
+
+def test_context_shows_whether_a_listing_is_for_rent_or_sale_and_its_status():
+    context = build_context_from_listings([{"city": "Leuven", "deal": "sale", "availability": "under offer"}])
+    assert "For: sale" in context
+    assert "Status: under offer" in context

@@ -181,4 +181,6 @@ class PropertyCrawler:
         if fresh:
             self._indexer.index(fresh)
             self._store.touch(fresh)   # only after the upsert succeeded, so a failure is retried next pass
+        fresh_ids = {l.id for l in fresh}
+        self._store.seen_again([l for l in listings if l.id not in fresh_ids])
         return fresh

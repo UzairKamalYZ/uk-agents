@@ -3,7 +3,10 @@
     {
       "name": "immoweb",
       "enabled": true,
-      "start_urls": ["https://www.immoweb.be/en/search/house-and-apartment/for-rent?countries=BE&orderBy=newest"],
+      "start_urls": [
+        "https://www.immoweb.be/en/search/house-and-apartment/for-rent?countries=BE&orderBy=newest",
+        "https://www.immoweb.be/en/search/house-and-apartment/for-sale?countries=BE&orderBy=newest"
+      ],
       "listing_selector": "article.card--result",
       "link_selector": "a.card__title-link",
       "fields": {
@@ -11,7 +14,8 @@
         "price": ".card--result__price",
         "city": ".card__information--locality",
         "rooms": {"selector": ".card__information--property", "pattern": "(\\d+)\\s*bdr"},
-        "area": {"selector": ".card__information--property", "pattern": "(\\d+)\\s*m²"}
+        "area": {"selector": ".card__information--property", "pattern": "(\\d+)\\s*m²"},
+        "photo": {"selector": "img", "attr": "src"}
       },
       "next_page_selector": "a.pagination__link--next",
       "max_pages": 3,

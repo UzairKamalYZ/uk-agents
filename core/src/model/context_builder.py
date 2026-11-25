@@ -3,6 +3,8 @@ _FIELDS = [
     ("title", "Title", ""),
     ("city", "Location", ""),
     ("type", "Type", ""),
+    ("deal", "For", ""),                 # "rent" / "sale"
+    ("availability", "Status", ""),      # "available", "under offer", "sold", "rented"
     ("rooms", "Rooms", ""),
     ("squareMeters", "Surface", " m²"),
 ]
