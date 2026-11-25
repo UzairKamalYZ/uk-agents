@@ -43,8 +43,6 @@ class Config:
     ANTHROPIC_API = os.getenv("ANTHROPIC_API", "true").lower() == "true"
     SENTENCE_TRANSFORMER_MODEL = os.getenv("SENTENCE_TRANSFORMER_MODEL")
     URLS_FILE = _project_path("URLS_FILE", "agents/property/urls.txt")
-    # Folder of Polish housing CSVs indexed by agents.property.gatherers.pl_housing_data_collector
-    HOUSING_DATASET_DIR = _project_path("HOUSING_DATASET_DIR", "agents/property/datasets/pl-housing")
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
     # Property agent prompts
@@ -62,7 +60,7 @@ class Config:
     # SQLite file for persistent session history (relative → from the project root)
     SESSION_DB_FILE = _project_path("SESSION_DB_FILE", "sessions.db")
     # Prompt the scheduled cron client sends on every run
-    CRON_SEARCH_PROMPT = os.getenv("CRON_SEARCH_PROMPT", "Find 2-bedroom apartments in Poland under 1000")
+    CRON_SEARCH_PROMPT = os.getenv("CRON_SEARCH_PROMPT", "Find new 2-bedroom apartments for rent")
     # SQLite file where the orchestrator keeps conversations paused for a confirmation
     CHECKPOINT_DB_FILE = _project_path("CHECKPOINT_DB_FILE", "checkpoints.db")
     # Selenium scraping browser connection string

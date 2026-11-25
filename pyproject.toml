@@ -33,6 +33,7 @@ dependencies = [
     "faster-whisper>=1.1.0",
     # faster-whisper 1.2.1 calls av.open(metadata_errors=...), which PyAV 19 removed
     "av<19",
+    "playwright>=1.55",
 ]
 
 [dependency-groups]
@@ -42,4 +43,4 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "orchestrator/tests", "clients/tests", "agents"]
+testpaths = ["core/tests", "orchestrator/tests", "clients/tests", "agents", "property_crawler/tests"]

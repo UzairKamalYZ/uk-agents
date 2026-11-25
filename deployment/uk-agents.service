@@ -3,7 +3,7 @@
 # paths below if it lives elsewhere.  Install steps: deployment/README.md.
 
 [Unit]
-Description=uk-agents (REST API, Telegram bot, Streamlit UI — follows main)
+Description=uk-agents (REST API, Telegram bot, Streamlit UI, property crawler — follows main)
 After=network-online.target
 Wants=network-online.target
 

@@ -130,8 +130,7 @@ uk-agents/
 │   │   └── prompts/System_Prompt.txt
 │   ├── property/
 │   │   ├── agent.py                  # PropertySearchAgent(BaseAgent) — RAG
-│   │   ├── housing/                  # CSV → embedding-ready text pipeline
-│   │   ├── gatherers/                # URL + Polish housing data ingestion
+│   │   ├── gatherers/                # URL ingestion (urls.txt)
 │   │   ├── scraping/                 # HTTP (BeautifulSoup) + Selenium scrapers
 │   │   ├── urls.txt                  # URLs for the URL ingester (one per line, # comments)
 │   │   └── prompts/System_Prompt.txt
@@ -669,13 +668,15 @@ Pass the returned `session_id` on the next call to continue the conversation; wi
 
 ## Data Ingestion
 
-### CSV (Polish housing data)
+### Crawler (every hour, Playwright)
 
 ```bash
-python -m agents.property.gatherers.pl_housing_data_collector
+uv run playwright install chromium                 # once per machine
+python -m property_crawler.main             # a pass every CRAWLER_INTERVAL_MINUTES (default 60)
+python -m property_crawler.main --once      # one pass, then exit
 ```
 
-Reads every CSV in `HOUSING_DATASET_DIR` (default `agents/property/datasets/pl-housing`, resolved from the project root). Streams the CSVs in chunks, converts each row to a text document, embeds it, and saves the vectors to the configured store in batches of 100. With no CSV files there it logs where it looked and stops.
+`property_crawler/` is a separate, self-contained package (it imports nothing from uk-agents and is meant to become its own repository). It visits each website in `property_crawler/sites.json` in turn with headless Chromium, reads listing cards with per-site CSS selectors, follows the next-page links, and upserts only new or changed listings into the Pinecone index the property agent searches. On a server, `deployment/deploy.sh` runs it as one of its services. Full reference: [property_crawler/README.md](property_crawler/README.md).
 
 ### From URLs
 
@@ -718,7 +719,6 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 |---|---|---|
 | `PROMPT_FILE` | `agents/property/prompts/System_Prompt.txt` | Property agent system prompt |
 | `URLS_FILE` | `agents/property/urls.txt` | URL list for the URL ingester |
-| `HOUSING_DATASET_DIR` | `agents/property/datasets/pl-housing` | CSV folder for the housing ingester |
 | `RAG_K` | `5` | Listings returned per vector search |
 | `ROUTER_PROMPT_FILE` | `orchestrator/prompts/router.txt` | Router prompt (cleanup + agent plan) |
 | `CONFIRMATION_PROMPT_FILE` | `orchestrator/prompts/confirmation.txt` | Classifies replies to a pending item |
@@ -738,7 +738,7 @@ Path settings resolve relative values from the project root.
 | `TELEGRAM_BOT_TOKEN` | _(required)_ | Token from [@BotFather](https://t.me/BotFather) |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header (the Streamlit UI sends it automatically) |
 | `REST_API_URL` | `http://localhost:8000` | Where the Streamlit UI finds the REST API |
-| `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled job |
+| `CRON_SEARCH_PROMPT` | `Find new 2-bedroom apartments for rent` | Prompt used by the scheduled job |
 | `WHISPER_MODEL` | `small` | faster-whisper model for Telegram voice notes: `tiny`, `base`, `small`, `medium`, `large-v3` |
 
 ### Expense tracker and FBR filing
@@ -836,12 +836,12 @@ python -m clients.rest.main
 
 ```bash
 # Blocking
-curl "http://localhost:8000/ask?prompt=3+bed+Warsaw"
+curl "http://localhost:8000/ask?prompt=3+bed+apartment"
 # Continue the same conversation
 curl "http://localhost:8000/ask?prompt=cheaper+ones?&session_id=<session_id from the last reply>"
 
 # Streaming (SSE)
-curl "http://localhost:8000/ask?prompt=3+bed+Warsaw&stream=true"
+curl "http://localhost:8000/ask?prompt=3+bed+apartment&stream=true"
 ```
 
 ### Streamlit UI

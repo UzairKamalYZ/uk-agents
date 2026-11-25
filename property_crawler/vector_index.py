@@ -1,0 +1,66 @@
+"""
+The Pinecone index the crawler writes to, with the sentence-transformers model that
+embeds listings. The searching application must embed queries with the same model
+(SENTENCE_TRANSFORMER_MODEL) and search the same index (PINECONE_INDEX_NAME), default
+namespace.
+"""
+import logging
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+DELETE_BATCH = 1000   # Pinecone deletes at most 1000 ids per call
+
+
+class VectorIndex:
+
+    def __init__(self, api_key: str, index_name: str, model_name: str):
+        if not api_key or not index_name:
+            raise ValueError("PINECONE_API_KEY and PINECONE_INDEX_NAME must be set")
+        self._api_key = api_key
+        self._index_name = index_name
+        self._model_name = model_name
+        self._model = None
+        self._index = None
+
+    @property
+    def model(self):
+        if self._model is None:   # lazy: loading the model takes a while
+            from sentence_transformers import SentenceTransformer
+            self._model = SentenceTransformer(self._model_name)
+        return self._model
+
+    @property
+    def index(self):
+        if self._index is None:
+            from pinecone import Pinecone, ServerlessSpec
+            client = Pinecone(api_key=self._api_key)
+            if self._index_name not in client.list_indexes().names():
+                logger.info("[crawler] creating Pinecone index %s", self._index_name)
+                client.create_index(
+                    name=self._index_name,
+                    dimension=self.model.get_sentence_embedding_dimension(),
+                    metric="cosine",
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+                )
+            self._index = client.Index(self._index_name)
+        return self._index
+
+    def upsert(self, documents: dict[str, dict]) -> None:
+        """documents: vector id → metadata, whose "text" is what gets embedded."""
+        ids = list(documents)
+        texts = [documents[i]["text"] for i in ids]
+        embeddings = np.asarray(self.model.encode(texts), dtype="float32")
+        self.index.upsert(vectors=[
+            {"id": i, "values": embeddings[n].tolist(), "metadata": documents[i]}
+            for n, i in enumerate(ids)
+        ])
+
+    def list_ids(self):
+        """Every vector id, in pages (serverless indexes page through ids)."""
+        return self.index.list()
+
+    def delete(self, ids: list[str]) -> None:
+        for start in range(0, len(ids), DELETE_BATCH):
+            self.index.delete(ids=ids[start : start + DELETE_BATCH])
