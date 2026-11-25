@@ -16,6 +16,7 @@ setup_logging()
 import argparse
 import logging
 import time
+from datetime import timedelta
 
 from core.src.config.config import Config
 from core.src.utils import run_service
@@ -53,6 +54,8 @@ class CrawlerService:
                 indexer=self._indexer,
                 robots=RobotsChecker() if Config.CRAWLER_RESPECT_ROBOTS else None,
                 page_delay_seconds=Config.CRAWLER_PAGE_DELAY_SECONDS,
+                back_off=timedelta(minutes=Config.CRAWLER_BACK_OFF_MINUTES),
+                max_back_off=timedelta(hours=Config.CRAWLER_MAX_BACK_OFF_HOURS),
                 should_stop=lambda: self._stop_requested,
             )
             return crawler.run_once()

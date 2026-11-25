@@ -14,18 +14,32 @@ python -m agents.property.crawler.main --once      # one pass, then exit
 
 ```
 for each enabled site in sites.json (in order):
+    still backing off from a block?    → skip it this pass
     fresh browser context (no cookies carried between sites)
     for each start URL:
         page = start URL
         while page and pages < max_pages:
             robots.txt allows it?          (CRAWLER_RESPECT_ROBOTS)
+            wait a random 8–16 s           (not before the pass's first page)
             render in Chromium, wait for `wait_for`, scroll `scrolls` times
+            refused (403/429/503, bot check)?  → stop this site, back off
             cards → listings               (extractor.py, CSS selectors)
             new or changed? (seen.db)      → embed + upsert to Pinecone, then mark seen
             nothing new on this page?      → stop paging (stop_when_seen)
             page = the `next_page_selector` link
-        wait CRAWLER_PAGE_DELAY_SECONDS between page loads
 ```
+
+### Wait, stop and see
+
+The crawler is paced so that it doesn't get blocked, and backs away when a site pushes back:
+
+- **Wait.** Before every page load except the first of a pass, it pauses for a random time between `CRAWLER_PAGE_DELAY_SECONDS` and twice that: 8–16 s by default. With `max_pages: 3`, a site gets at most 3 page loads an hour.
+- **Stop.** A refusal ends that site's crawl for this pass at once. A refusal is HTTP 401/403/429/503, or a page with no listings that is a bot check (Cloudflare "Just a moment…", "Attention Required", Turnstile, DataDome, reCAPTCHA/hCaptcha). Listings from pages before the refusal are kept.
+- **See.** The site is skipped for `CRAWLER_BACK_OFF_MINUTES` (60), then 2 h, 4 h, 8 h and so on, up to `CRAWLER_MAX_BACK_OFF_HOURS` (24), each time it refuses again. When the site sends `Retry-After` and asks for longer, the crawler waits that long. The first normal answer resets this. The back-off is kept in `CRAWLER_DB_FILE`, so restarts and deploys don't reset it.
+
+The log says what happened: `immoweb refused the crawler (HTTP 403) — stopped; not trying again before 2026-11-26 10:41 UTC`, then `immoweb: skipped (backing off …)` on each pass until then.
+
+The crawler never tries to get *past* a block. It doesn't solve CAPTCHAs, fake a fingerprint or rotate IPs. A site that keeps refusing stays at one attempt a day.
 
 - **Only new data is embedded.** `CRAWLER_DB_FILE` (SQLite) keeps a content hash for each listing it has indexed. A listing is embedded again only when its text changes, for example after a price drop.
 - **No duplicates in Pinecone.** The vector ID comes from the listing's URL (`crawl-<sha1>`), so a re-upsert overwrites the old vector.
@@ -65,7 +79,7 @@ for each enabled site in sites.json (in order):
 | `name` | required | Shown in logs, stored as the `site` metadata |
 | `start_urls` (or `url`) | required | Listing pages to start from. Sort them newest first, so `stop_when_seen` can stop early |
 | `listing_selector` | required | CSS selector matching one listing card |
-| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr"}` for an attribute. `price`, `rooms` and `area` are parsed into numbers (`3 500 €` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description` and `url` are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
+| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr", "pattern"}`: an attribute instead of the text, and/or a regex whose first group is kept (`"(\\d+)\\s*bdr"` reads `2` from `2 bdr. 85 m²`). `price`, `rooms` and `area` are parsed into numbers (`3 500 €` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description` and `url` are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
 | `link_selector` | `a[href]` | Link to the listing inside the card. It is the listing's identity. A card without a link gets an ID from its text |
 | `next_page_selector` | none | Link to the next results page |
 | `max_pages` | `1` | Pages followed per start URL |
@@ -76,11 +90,25 @@ for each enabled site in sites.json (in order):
 | `currency` | none | Shown with the price, e.g. `EUR` |
 | `enabled` | `true` | `false` keeps the entry without crawling it |
 
-The shipped `sites.json` holds one disabled example. To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
+The shipped `sites.json` crawls Immoweb (see below) and holds one disabled example. To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
 
 ## What lands in Pinecone
 
 Each listing is embedded as text, for example `Sunny 2-bed. Apartment in Ghent. Price 1150 EUR. 2 rooms. 52 square meters. …`. The text comes with metadata that `core/src/model/context_builder.py` shows the agent: `text`, `city`, `price`, `currency`, `rooms`, `squareMeters`, `type` and `url` (shown to the agent as `Link:`), plus `source: "crawler"`, `site`, `title`, `crawled_at` (shown as `Last seen:`) and any extra fields.
+
+## Immoweb
+
+`sites.json` crawls `https://www.immoweb.be/en/search/house-and-apartment/for-rent?countries=BE&orderBy=newest`, houses and apartments for rent anywhere in Belgium, newest first. That's 3 result pages (about 90 listings) per pass. To narrow it, change the search on immoweb.be and paste the resulting URL into `start_urls`. Keep `orderBy=newest`, so the crawler stops at the first page with nothing new.
+
+**Unverified.** When this was set up, Immoweb's Cloudflare refused every automated request from a datacenter IP, robots.txt included (HTTP 403, "Just a moment…"). So the selectors (`article.card--result`, `.card--result__price`, `.card__information--property`, `.card__information--locality`, `a.pagination__link--next`) follow Immoweb's last known markup and are not checked against the live site. On the server, look at the first pass in `logs/agent.log`:
+
+| Log says | Meaning |
+|---|---|
+| `immoweb: 3 page(s), 90 listing(s), 90 new/changed` | It works |
+| `no listings matched 'article.card--result'` | The page loaded but the markup changed: update the selectors |
+| `immoweb refused the crawler (HTTP 403)` | Cloudflare blocks the server. The crawler backs off and tries again later, at most once a day |
+
+Check Immoweb's terms of use before relying on this. Listing portals often forbid automated collection, and the robots.txt could not be read from here. If Immoweb keeps refusing, saved-search e-mail alerts are an alternative: Immoweb sends new listings by e-mail, which the mail agent can read.
 
 ## Clearing out old data
 
@@ -102,7 +130,9 @@ It deletes from `PINECONE_INDEX_NAME`, in the default namespace, and can't be un
 | `CRAWLER_DB_FILE` | per-user data dir `/crawler/seen.db` | Which listings are already indexed (delete it to re-index everything) |
 | `CRAWLER_HEADLESS` | `true` | `false` shows the browser window (debugging selectors) |
 | `CRAWLER_TIMEOUT_SECONDS` | `30` | Page load / `wait_for` timeout |
-| `CRAWLER_PAGE_DELAY_SECONDS` | `3` | Pause between page loads |
+| `CRAWLER_PAGE_DELAY_SECONDS` | `8` | Random wait between page loads: this many seconds to twice as many |
+| `CRAWLER_BACK_OFF_MINUTES` | `60` | How long a site that refused the crawler is skipped; doubled each time it refuses again |
+| `CRAWLER_MAX_BACK_OFF_HOURS` | `24` | The longest back-off |
 | `CRAWLER_RESPECT_ROBOTS` | `true` | Skip URLs the site's robots.txt disallows |
 | `CRAWLER_BROWSER_PATH` | _(empty)_ | A Chromium binary to use instead of Playwright's own |
 
@@ -110,7 +140,7 @@ Pinecone and the embedding model come from the usual `PINECONE_*` and `SENTENCE_
 
 ## Good to know
 
-- **Check each site's terms of use.** Many listing portals forbid scraping. Some block headless browsers or show a CAPTCHA, and the crawler does not try to get around either. Such a site logs `no listings matched`.
+- **Check each site's terms of use.** Many listing portals forbid scraping. Some block headless browsers or show a CAPTCHA. The crawler does not try to get around either: it backs off (see [Wait, stop and see](#wait-stop-and-see)).
 - **Listings are not removed** when they disappear from a site. `crawled_at` tells you how fresh a listing is.
 - The older `agents/property/gatherers/data_collector.py` (requests + regex over `urls.txt`) still works for static pages without per-site selectors.
 

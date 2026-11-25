@@ -4,6 +4,7 @@ need a real browser), and checks robots.txt before visiting a URL.
 """
 import logging
 import urllib.robotparser
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import requests
@@ -14,6 +15,13 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
+
+
+@dataclass
+class FetchedPage:
+    html: str
+    status: int | None = None          # HTTP status of the page itself
+    retry_after: str | None = None     # the Retry-After header, if the site sent one
 
 
 class PlaywrightFetcher:
@@ -44,13 +52,18 @@ class PlaywrightFetcher:
         self._context.set_default_timeout(self._timeout_ms)
         self._page = self._context.new_page()
 
-    def fetch(self, url: str, wait_for: str | None = None, scrolls: int = 0) -> str:
-        """The page's HTML after JavaScript has run. Raises on navigation errors."""
+    def fetch(self, url: str, wait_for: str | None = None, scrolls: int = 0) -> FetchedPage:
+        """The page's HTML after JavaScript has run, with its HTTP status. Raises on navigation errors."""
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
         if self._page is None:
             self.new_site()
         page = self._page
-        page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms)
+        response = page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms)
+        status = response.status if response is not None else None
+        headers = response.headers if response is not None else {}
+        if status is not None and status >= 400:
+            # A refusal (block, rate limit): don't wait for listings that will never come.
+            return FetchedPage(page.content(), status, headers.get("retry-after"))
         if wait_for:
             try:
                 page.wait_for_selector(wait_for, timeout=self._timeout_ms)
@@ -60,7 +73,7 @@ class PlaywrightFetcher:
         for _ in range(scrolls):
             page.mouse.wheel(0, 20000)
             page.wait_for_timeout(1000)
-        return page.content()
+        return FetchedPage(page.content(), status, headers.get("retry-after"))
 
     def _close_context(self) -> None:
         if self._context is not None:

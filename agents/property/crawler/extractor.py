@@ -15,7 +15,13 @@ MAX_DESCRIPTION_CHARS = 1000
 
 ID_PREFIX = "crawl-"   # every vector id the crawler writes starts with this
 
-_NUMBER = re.compile(r"\d[\d\s  .,']*")
+# "1 250", "1.250,50", "1,250.50", "48,5", "1250": a thousands separator only before an exact
+# group of three digits, so "€1,250 1250€" (a price shown twice) reads as 1250, not 12501250.
+_SEP = r"[\s\u00a0\u202f.,']"
+_NUMBER = re.compile(
+    rf"\d{{1,3}}(?!\d)(?:{_SEP}\d{{3}}(?!\d))*(?:[.,]\d{{1,2}}(?!\d))?"
+    rf"|\d+(?:[.,]\d{{1,2}}(?!\d))?"
+)
 
 
 @dataclass
@@ -112,9 +118,13 @@ def _read(card: Tag, spec: FieldSelector) -> str:
     node = card.select_one(spec.selector)
     if node is None:
         return ""
-    if spec.attr:
-        return _clean(str(node.get(spec.attr) or ""))
-    return _clean(node.get_text(" "))
+    text = _clean(str(node.get(spec.attr) or "")) if spec.attr else _clean(node.get_text(" "))
+    if spec.pattern:
+        match = re.search(spec.pattern, text, re.IGNORECASE)
+        if not match:
+            return ""
+        return _clean(match.group(1) if match.groups() else match.group(0))
+    return text
 
 
 def _absolute(href: str, page_url: str) -> str:

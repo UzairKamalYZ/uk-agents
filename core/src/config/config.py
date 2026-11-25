@@ -52,7 +52,11 @@ class Config:
     CRAWLER_DB_FILE = _data_path("CRAWLER_DB_FILE", _user_data_dir() / "crawler" / "seen.db")
     CRAWLER_HEADLESS = os.getenv("CRAWLER_HEADLESS", "true").lower() == "true"
     CRAWLER_TIMEOUT_SECONDS = float(os.getenv("CRAWLER_TIMEOUT_SECONDS", "30"))
-    CRAWLER_PAGE_DELAY_SECONDS = float(os.getenv("CRAWLER_PAGE_DELAY_SECONDS", "3"))
+    # Random wait between page loads: CRAWLER_PAGE_DELAY_SECONDS … twice that
+    CRAWLER_PAGE_DELAY_SECONDS = float(os.getenv("CRAWLER_PAGE_DELAY_SECONDS", "8"))
+    # A site that refuses the crawler is skipped for this long, doubled per repeated block, up to the max
+    CRAWLER_BACK_OFF_MINUTES = int(os.getenv("CRAWLER_BACK_OFF_MINUTES", "60"))
+    CRAWLER_MAX_BACK_OFF_HOURS = int(os.getenv("CRAWLER_MAX_BACK_OFF_HOURS", "24"))
     CRAWLER_RESPECT_ROBOTS = os.getenv("CRAWLER_RESPECT_ROBOTS", "true").lower() == "true"
     # Chromium binary; empty → the one `playwright install chromium` downloaded
     CRAWLER_BROWSER_PATH = os.getenv("CRAWLER_BROWSER_PATH", "")

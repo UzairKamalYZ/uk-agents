@@ -1,14 +1,16 @@
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agents.property.crawler.blocking import block_reason, parse_retry_after
 from agents.property.crawler.crawler import PropertyCrawler
 from agents.property.crawler.extractor import Listing, extract_listings, next_page_url, parse_number
-from agents.property.crawler.fetcher import PlaywrightFetcher, RobotsChecker
+from agents.property.crawler.fetcher import FetchedPage, PlaywrightFetcher, RobotsChecker
 from agents.property.crawler.indexer import ListingIndexer
 from agents.property.crawler.main import CrawlerService
 from agents.property.crawler.purge import purge
@@ -56,7 +58,7 @@ def _page(cards: list[str], next_href: str | None = None) -> str:
 
 @pytest.mark.parametrize("text, expected", [
     ("3 500 €", 3500), ("€1,250.50", 1250.5), ("1.200 EUR", 1200), ("48,5 m²", 48.5),
-    ("2 rooms", 2), ("EUR 4 200 / month", 4200), ("ask for price", None), ("", None), (None, None),
+    ("2 rooms", 2), ("€1,250 1250€", 1250), ("1 250 000 €", 1250000), ("EUR 4 200 / month", 4200), ("ask for price", None), ("", None), (None, None),
 ])
 def test_parse_number_reads_european_and_english_formats(text, expected):
     assert parse_number(text) == expected
@@ -136,10 +138,41 @@ def test_missing_sites_file_is_reported(tmp_path, caplog):
     assert "sites.json" in caplog.text
 
 
-def test_shipped_sites_file_parses_and_crawls_nothing_until_a_site_is_enabled():
-    raw = json.loads((ROOT / "agents/property/crawler/sites.json").read_text())
-    assert raw["sites"] and all(not s.get("enabled", True) for s in raw["sites"])
-    assert load_sites(ROOT / "agents/property/crawler/sites.json") == []
+def test_shipped_sites_file_crawls_immoweb_only():
+    sites = load_sites(ROOT / "agents/property/crawler/sites.json")
+    assert [s.name for s in sites] == ["immoweb"]
+    assert sites[0].start_urls[0].startswith("https://www.immoweb.be/en/search/")
+    assert sites[0].currency == "EUR"
+
+
+def test_immoweb_config_reads_a_result_card():
+    # Markup as Immoweb's result cards were last known to look; the live site could not be
+    # loaded to confirm it (Cloudflare refuses automated browsers from datacenter IPs).
+    [immoweb] = load_sites(ROOT / "agents/property/crawler/sites.json")
+    card = (
+        '<article class="card card--result">'
+        '<h2 class="card__title"><a class="card__title-link" href="https://www.immoweb.be/en/classified/'
+        'apartment/for-rent/ixelles/1050/12345678">Apartment for rent</a></h2>'
+        '<p class="card--result__price"><span aria-hidden="true">€1,250</span><span class="sr-only">1250€</span></p>'
+        '<p class="card__information--property">2 bdr. 85 m²</p>'
+        '<p class="card__information--locality">1050 Ixelles</p></article>'
+        '<a class="pagination__link pagination__link--next" href="?countries=BE&orderBy=newest&page=2">Next</a>'
+    )
+    url = immoweb.start_urls[0]
+    [listing] = extract_listings(_page([card]), immoweb, url)
+    assert listing.url.endswith("/12345678")
+    assert (listing.price, listing.rooms, listing.area, listing.city) == (1250, 2, 85, "1050 Ixelles")
+    assert next_page_url(_page([card]), immoweb, url).endswith("page=2")
+
+
+def test_a_field_pattern_keeps_its_first_group():
+    site = _site(fields={"rooms": FieldSelector(".info", pattern=r"(\d+)\s*bdr"),
+                         "area": FieldSelector(".info", pattern=r"(\d+)\s*m²"),
+                         "garden": FieldSelector(".info", pattern=r"garden")})
+    html = _page(['<article class="offer"><a href="/o/1">x</a><p class="info">3 bdr. 120 m²</p></article>'])
+    [listing] = extract_listings(html, site, "https://portal.example/")
+    assert (listing.rooms, listing.area) == (3, 120)
+    assert "garden" not in listing.extra
 
 
 # --- seen store -------------------------------------------------------------
@@ -166,7 +199,9 @@ def test_seen_store_survives_a_restart(tmp_path):
 # --- crawler ----------------------------------------------------------------
 
 class FakeFetcher:
-    def __init__(self, pages: dict[str, str], fail: set[str] = frozenset()):
+    """pages: url → HTML, or a FetchedPage to answer with a status."""
+
+    def __init__(self, pages: dict, fail: set[str] = frozenset()):
         self.pages, self.fail = pages, fail
         self.fetched: list[str] = []
         self.opened = self.closed = 0
@@ -183,7 +218,8 @@ class FakeFetcher:
         self.fetched.append(url)
         if url in self.fail:
             raise RuntimeError("navigation failed")
-        return self.pages[url]
+        page = self.pages[url]
+        return page if isinstance(page, FetchedPage) else FetchedPage(page, 200)
 
     def close(self):
         self.closed += 1
@@ -214,7 +250,109 @@ def _three_pages() -> dict[str, str]:
 
 def _crawler(tmp_path, sites, fetcher, indexer, **kw) -> PropertyCrawler:
     store = SeenStore(tmp_path / "seen.db")
-    return PropertyCrawler(sites, fetcher, store, indexer, page_delay_seconds=0, sleep=lambda s: None, **kw)
+    kw.setdefault("sleep", lambda s: None)
+    return PropertyCrawler(sites, fetcher, store, indexer, page_delay_seconds=0, **kw)
+
+
+# --- wait, stop and see -----------------------------------------------------
+
+CLOUDFLARE = FetchedPage("<html><head><title>Just a moment...</title></head><body></body></html>", 403)
+
+
+def test_crawler_waits_a_random_while_between_page_loads(tmp_path):
+    waits = []
+    crawler = PropertyCrawler([_site()], FakeFetcher(_three_pages()), SeenStore(tmp_path / "seen.db"),
+                              FakeIndexer(), page_delay_seconds=8, sleep=waits.append,
+                              jitter=lambda d: d + 1)
+    crawler.run_once()
+    assert waits == [9, 9]   # before pages 2 and 3, not before the first
+
+
+def test_default_wait_is_between_one_and_two_delays():
+    from agents.property.crawler.crawler import _jitter
+    assert all(8 <= _jitter(8) <= 16 for _ in range(200))
+
+
+def test_a_block_stops_the_site_and_backs_off(tmp_path, caplog):
+    pages = _three_pages()
+    pages[BASE + "2"] = CLOUDFLARE
+    indexer = FakeIndexer()
+    with caplog.at_level(logging.WARNING):
+        report = _crawler(tmp_path, [_site()], FakeFetcher(pages), indexer).run_once()
+    assert report.sites[0].blocked == "HTTP 403"
+    assert report.sites[0].pages == 2                      # page 3 never requested
+    assert [l.title for l in indexer.indexed] == ["Flat 1", "Flat 2"]   # page 1 still indexed
+    assert "refused the crawler" in caplog.text
+    with SeenStore(tmp_path / "seen.db") as store:
+        until = store.blocked_until("portal")
+    assert until is not None and until > datetime.now(timezone.utc) + timedelta(minutes=55)
+
+
+def test_a_backing_off_site_is_skipped_without_a_browser(tmp_path):
+    pages = {BASE + "1": CLOUDFLARE}
+    _crawler(tmp_path, [_site()], FakeFetcher(pages), FakeIndexer()).run_once()
+    fetcher = FakeFetcher(_three_pages())
+    report = _crawler(tmp_path, [_site()], fetcher, FakeIndexer()).run_once()
+    assert fetcher.fetched == [] and fetcher.opened == 0
+    assert "backing off" in report.sites[0].skipped
+
+
+def test_a_blocked_site_does_not_stop_the_next_one(tmp_path):
+    other = _site(name="other", start_urls=["https://other.example/"], next_page_selector=None)
+    pages = {BASE + "1": CLOUDFLARE, "https://other.example/": _page([_card(5)])}
+    report = _crawler(tmp_path, [_site(), other], FakeFetcher(pages), FakeIndexer()).run_once()
+    assert report.sites[0].blocked and report.sites[1].indexed == 1
+
+
+def test_back_off_doubles_per_block_up_to_the_cap_and_honours_retry_after(tmp_path):
+    now = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
+    base, cap = timedelta(hours=1), timedelta(hours=24)
+    with SeenStore(tmp_path / "seen.db") as store:
+        waits = [store.record_block("s", "HTTP 429", base, cap, now=now) - now for _ in range(7)]
+        assert [w.total_seconds() / 3600 for w in waits] == [1, 2, 4, 8, 16, 24, 24]
+        assert store.record_block("t", "HTTP 429", base, cap, timedelta(hours=3), now=now) - now == timedelta(hours=3)
+        store.clear_block("s")
+        assert store.blocked_until("s") is None
+        assert store.record_block("s", "HTTP 429", base, cap, now=now) - now == base   # strikes reset
+
+
+def test_a_normal_pass_clears_an_expired_back_off(tmp_path):
+    with SeenStore(tmp_path / "seen.db") as store:
+        past = datetime.now(timezone.utc) - timedelta(days=2)
+        store.record_block("portal", "HTTP 429", timedelta(hours=1), timedelta(hours=1), now=past)
+    _crawler(tmp_path, [_site()], FakeFetcher(_three_pages()), FakeIndexer()).run_once()
+    with SeenStore(tmp_path / "seen.db") as store:
+        assert store.record_block("portal", "x", timedelta(hours=1), timedelta(hours=24)) \
+            - datetime.now(timezone.utc) < timedelta(hours=1, minutes=1)   # strike 1 again
+
+
+def test_retry_after_seconds_is_used(tmp_path):
+    pages = {BASE + "1": FetchedPage("slow down", 429, retry_after="7200")}
+    _crawler(tmp_path, [_site()], FakeFetcher(pages), FakeIndexer()).run_once()
+    with SeenStore(tmp_path / "seen.db") as store:
+        assert store.blocked_until("portal") > datetime.now(timezone.utc) + timedelta(minutes=115)
+
+
+@pytest.mark.parametrize("page, listings, expected", [
+    (FetchedPage("x", 429), 0, "HTTP 429"),
+    (FetchedPage("x", 503), 3, "HTTP 503"),
+    (FetchedPage("<title>Attention Required! | Cloudflare</title>", 200), 0, "challenge page"),
+    (FetchedPage('<div id="cf-turnstile"></div>', 200), 0, "challenge page (cf-turnstile)"),
+    (FetchedPage('<script src="https://ct.captcha-delivery.com/c.js"></script>', 200), 0, "captcha-delivery.com"),
+    (FetchedPage('<title>Rentals</title><div class="g-recaptcha"></div>', 200), 4, None),  # real content
+    (FetchedPage("<title>Rentals</title>", 200), 0, None),   # just no matches: a selector problem
+    (FetchedPage("x", 404), 0, None),
+])
+def test_block_reason(page, listings, expected):
+    reason = block_reason(page, listings)
+    assert (reason is None) if expected is None else (expected in reason)
+
+
+def test_parse_retry_after_reads_seconds_and_dates():
+    now = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
+    assert parse_retry_after("120") == timedelta(seconds=120)
+    assert parse_retry_after("Wed, 25 Nov 2026 13:00:00 GMT", now=now) == timedelta(hours=1)
+    assert parse_retry_after(None) is None and parse_retry_after("soon") is None
 
 
 def test_crawler_follows_pages_and_indexes_every_listing(tmp_path):
@@ -415,8 +553,8 @@ def test_playwright_fetcher_returns_javascript_rendered_html(tmp_path):
         pytest.skip(f"Chromium not available: {exc}")
     try:
         fetcher.new_site()
-        html = fetcher.fetch(page.as_uri(), wait_for="article.offer")
+        fetched = fetcher.fetch(page.as_uri(), wait_for="article.offer")
     finally:
         fetcher.close()
-    [listing] = extract_listings(html, _site(), page.as_uri())
+    [listing] = extract_listings(fetched.html, _site(), page.as_uri())
     assert listing.title == "Rendered"

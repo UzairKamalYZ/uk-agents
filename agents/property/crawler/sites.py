@@ -14,9 +14,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FieldSelector:
-    """Where one listing field lives inside a card: the selector's text, or one of its attributes."""
+    """
+    Where one listing field lives inside a card: the selector's text, or one of its
+    attributes; `pattern` (a regex) then keeps its first group, e.g. "(\\d+) bdr".
+    """
     selector: str
     attr: str | None = None
+    pattern: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,7 +44,7 @@ class Site:
 def _field(spec) -> FieldSelector:
     if isinstance(spec, str):
         return FieldSelector(spec)
-    return FieldSelector(spec["selector"], spec.get("attr"))
+    return FieldSelector(spec["selector"], spec.get("attr"), spec.get("pattern"))
 
 
 def _site(raw: dict) -> Site:

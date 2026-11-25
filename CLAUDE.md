@@ -148,7 +148,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `FBR_TAX_MAX_TURNS` | `200` | Tool calls one FBR step may take |
 | `WHATSAPP_*` | — | Green API instance, group id, user name, away message, poll interval |
 | `MAIL_*` | — | IMAP accounts (JSON), check/summary intervals, digest group, `MAIL_SEEN_DB` |
-| `CRAWLER_*` | — | Property crawler: sites file, interval (60 min), seen-listings DB, headless, timeouts, robots.txt, browser path — see `docs/property-crawler.md` |
+| `CRAWLER_*` | — | Property crawler: sites file, interval (60 min), seen-listings DB, headless, timeouts, page delay (8–16 s), back-off after a block (60 min, doubling to 24 h), robots.txt, browser path — see `docs/property-crawler.md` |
 | `SBR_WEBDRIVER` | — | Selenium WebDriver URL, read directly by `agents/property/scraping/scrape_se.py` |
 | `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | `false` / — / `uk-agents` | LangSmith tracing |
 
@@ -239,5 +239,6 @@ Create `clients/<name>/main.py` (+ `__init__.py`), implement `BaseClient`, call 
 - **Anyone who can message the Telegram bot can use every agent**, including the expense tracker and FBR filing — there is no owner check.
 - **Tests never stub `sys.modules` for project code**: patch the names a test uses (`patch("clients.telegram.main.OrchestratorAgent")`). `core/tests/conftest.py` stubs only heavy third-party ML packages (sentence-transformers, pinecone).
 - **The property crawler needs a browser**: `deploy.sh` runs `playwright install chromium` on every build (the system libraries need `sudo .venv/bin/playwright install-deps chromium` once). Its tests use fake fetchers; the one real-Chromium test skips where no browser is installed.
+- **The crawler backs off, it never evades**: a refusal (401/403/429/503 or a bot-check page) stops that site for the pass and starts a back-off kept in `CRAWLER_DB_FILE` (`agents/property/crawler/blocking.py`). Don't add CAPTCHA solving, fingerprint spoofing, stealth plugins or proxy rotation.
 - **No Polish data**: the Polish CSV ingester was removed; the property index is fed by the crawler only (vector ids `crawl-…`). `python -m agents.property.crawler.purge --yes` deletes every other vector. Keep defaults and examples country-neutral.
 - **Pinned dependency**: `av<19` in `pyproject.toml` — faster-whisper 1.2.1 passes `av.open(metadata_errors=…)`, which PyAV 19 removed. Lift it when faster-whisper supports PyAV 19 (`core/tests/speech/test_transcriber.py` decodes a real voice note to catch this).
