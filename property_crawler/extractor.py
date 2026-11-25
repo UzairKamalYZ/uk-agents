@@ -66,7 +66,7 @@ class Listing:
         return hashlib.sha1(self.text.encode("utf-8")).hexdigest()
 
     def metadata(self, crawled_at: str) -> dict:
-        """Pinecone metadata; keys match what core.src.model.context_builder shows the agent."""
+        """Pinecone metadata. The searching app reads these keys (see README.md → What lands in Pinecone)."""
         meta = {
             "source": "crawler",
             "site": self.site,

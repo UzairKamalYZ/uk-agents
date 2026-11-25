@@ -7,18 +7,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agents.property.crawler.blocking import block_reason, parse_retry_after
-from agents.property.crawler.crawler import PropertyCrawler
-from agents.property.crawler.extractor import Listing, extract_listings, next_page_url, parse_number
-from agents.property.crawler.fetcher import FetchedPage, PlaywrightFetcher, RobotsChecker
-from agents.property.crawler.indexer import ListingIndexer
-from agents.property.crawler.main import CrawlerService
-from agents.property.crawler.purge import purge
-from agents.property.crawler.seen_store import SeenStore
-from agents.property.crawler.sites import Site, FieldSelector, load_sites
-from core.src.model.context_builder import build_context_from_listings
+from property_crawler.blocking import block_reason, parse_retry_after
+from property_crawler.crawler import PropertyCrawler
+from property_crawler.extractor import Listing, extract_listings, next_page_url, parse_number
+from property_crawler.fetcher import FetchedPage, PlaywrightFetcher, RobotsChecker
+from property_crawler.indexer import ListingIndexer
+from property_crawler.main import CrawlerService
+from property_crawler.purge import purge
+from property_crawler.settings import PACKAGE_DIR, ROOT, Settings
+from property_crawler.vector_index import VectorIndex
+from property_crawler.seen_store import SeenStore
+from property_crawler.sites import Site, FieldSelector, load_sites
 
-ROOT = Path(__file__).resolve().parents[3]
+SITES_FILE = PACKAGE_DIR / "sites.json"
 
 
 def _site(**overrides) -> Site:
@@ -139,7 +140,7 @@ def test_missing_sites_file_is_reported(tmp_path, caplog):
 
 
 def test_shipped_sites_file_crawls_immoweb_only():
-    sites = load_sites(ROOT / "agents/property/crawler/sites.json")
+    sites = load_sites(SITES_FILE)
     assert [s.name for s in sites] == ["immoweb"]
     assert sites[0].start_urls[0].startswith("https://www.immoweb.be/en/search/")
     assert sites[0].currency == "EUR"
@@ -148,7 +149,7 @@ def test_shipped_sites_file_crawls_immoweb_only():
 def test_immoweb_config_reads_a_result_card():
     # Markup as Immoweb's result cards were last known to look; the live site could not be
     # loaded to confirm it (Cloudflare refuses automated browsers from datacenter IPs).
-    [immoweb] = load_sites(ROOT / "agents/property/crawler/sites.json")
+    [immoweb] = load_sites(SITES_FILE)
     card = (
         '<article class="card card--result">'
         '<h2 class="card__title"><a class="card__title-link" href="https://www.immoweb.be/en/classified/'
@@ -269,7 +270,7 @@ def test_crawler_waits_a_random_while_between_page_loads(tmp_path):
 
 
 def test_default_wait_is_between_one_and_two_delays():
-    from agents.property.crawler.crawler import _jitter
+    from property_crawler.crawler import _jitter
     assert all(8 <= _jitter(8) <= 16 for _ in range(200))
 
 
@@ -439,7 +440,7 @@ def test_no_sites_means_no_browser(tmp_path):
 
 def test_robots_checker_reads_robots_txt_once_per_host():
     response = MagicMock(status_code=200, text="User-agent: *\nDisallow: /private\n")
-    with patch("agents.property.crawler.fetcher.requests.get", return_value=response) as get:
+    with patch("property_crawler.fetcher.requests.get", return_value=response) as get:
         robots = RobotsChecker()
         assert robots.allowed("https://a.example/rent")
         assert not robots.allowed("https://a.example/private/1")
@@ -448,22 +449,48 @@ def test_robots_checker_reads_robots_txt_once_per_host():
 
 def test_unreachable_robots_txt_allows_crawling():
     import requests
-    with patch("agents.property.crawler.fetcher.requests.get", side_effect=requests.ConnectionError("down")):
+    with patch("property_crawler.fetcher.requests.get", side_effect=requests.ConnectionError("down")):
         assert RobotsChecker().allowed("https://a.example/rent")
 
 
 # --- indexer ----------------------------------------------------------------
 
 def test_indexer_upserts_in_batches_with_listing_metadata():
-    embedder = MagicMock()
-    embedder.embed_documents_to_vectors.side_effect = lambda docs: list(docs)
+    vector_index = MagicMock()
     listings = [_listing(n) for n in range(5)]
-    assert ListingIndexer(embedder, batch_size=2).index(listings) == 5
-    batches = [c.args[0] for c in embedder.embed_documents_to_vectors.call_args_list]
+    assert ListingIndexer(vector_index, batch_size=2).index(listings) == 5
+    batches = [c.args[0] for c in vector_index.upsert.call_args_list]
     assert [len(b) for b in batches] == [2, 2, 1]
     doc = batches[0][listings[0].id]
     assert doc["text"] == listings[0].text and doc["url"] == listings[0].url
-    assert embedder.save_vectors_in_store.call_count == 3
+
+
+def _vector_index() -> VectorIndex:
+    index = VectorIndex("key", "listings", "some-model")
+    index._model, index._index = MagicMock(), MagicMock()
+    return index
+
+
+def test_vector_index_embeds_the_text_and_upserts_metadata():
+    import numpy as np
+    index = _vector_index()
+    index._model.encode.return_value = np.array([[0.5, 0.25], [1.0, 0.0]])
+    index.upsert({"crawl-a": {"text": "flat a", "city": "Ghent"}, "crawl-b": {"text": "flat b"}})
+    index._model.encode.assert_called_once_with(["flat a", "flat b"])
+    vectors = index._index.upsert.call_args.kwargs["vectors"]
+    assert vectors[0] == {"id": "crawl-a", "values": [0.5, 0.25], "metadata": {"text": "flat a", "city": "Ghent"}}
+    assert isinstance(vectors[1]["values"], list)
+
+
+def test_vector_index_deletes_in_chunks_of_1000():
+    index = _vector_index()
+    index.delete([str(i) for i in range(2500)])
+    assert [len(c.kwargs["ids"]) for c in index._index.delete.call_args_list] == [1000, 1000, 500]
+
+
+def test_vector_index_needs_pinecone_settings():
+    with pytest.raises(ValueError, match="PINECONE"):
+        VectorIndex("", "listings", "model")
 
 
 # --- purge ------------------------------------------------------------------
@@ -482,53 +509,69 @@ def test_purge_dry_run_deletes_nothing():
     store.delete.assert_not_called()
 
 
-def test_pinecone_store_deletes_in_chunks_of_1000():
-    from core.src.persistence.pinecone_store import PineconeStore
-    store = PineconeStore.__new__(PineconeStore)
-    store.index = MagicMock()
-    store.delete([str(i) for i in range(2500)])
-    assert [len(c.kwargs["ids"]) for c in store.index.delete.call_args_list] == [1000, 1000, 500]
+# --- settings ---------------------------------------------------------------
+
+def test_settings_defaults(monkeypatch, tmp_path):
+    for name in list(os.environ):
+        if name.startswith("CRAWLER_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    s = Settings.from_env()
+    assert s.sites_file == SITES_FILE
+    assert s.db_file == tmp_path / "property-crawler" / "seen.db"
+    assert (s.interval_minutes, s.page_delay_seconds, s.back_off_minutes, s.max_back_off_hours) == (60, 8, 60, 24)
+    assert s.headless and s.respect_robots
+
+
+def test_settings_resolve_relative_paths_from_the_repository_root(monkeypatch):
+    monkeypatch.setenv("CRAWLER_SITES_FILE", "my/sites.json")
+    monkeypatch.setenv("CRAWLER_HEADLESS", "false")
+    monkeypatch.setenv("CRAWLER_INTERVAL_MINUTES", "30")
+    s = Settings.from_env()
+    assert s.sites_file == ROOT / "my" / "sites.json"
+    assert not s.headless and s.interval_minutes == 30
+
+
+def test_the_package_imports_nothing_from_uk_agents():
+    # It is meant to move to its own repository: only the standard library, third-party
+    # packages and its own modules.
+    import ast
+    foreign = {"core", "agents", "orchestrator", "clients", "logging_config"}
+    for path in PACKAGE_DIR.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module or ""]
+            for name in names:
+                assert name.split(".")[0] not in foreign, f"{path.name} imports {name}"
 
 
 # --- service ----------------------------------------------------------------
+
+def _settings(tmp_path, sites) -> Settings:
+    return Settings(sites_file=sites, db_file=tmp_path / "seen.db", respect_robots=False,
+                    page_delay_seconds=0)
+
 
 def test_service_runs_a_pass_with_the_configured_files(tmp_path):
     sites = tmp_path / "sites.json"
     sites.write_text(json.dumps({"sites": [{
         "name": "portal", "start_urls": [BASE + "1"], "listing_selector": "article.offer",
         "fields": {"title": "h2"}, "next_page_selector": "a.next", "max_pages": 3}]}))
-    indexer = FakeIndexer()
-    with patch.multiple("agents.property.crawler.main.Config", CRAWLER_SITES_FILE=str(sites),
-                        CRAWLER_DB_FILE=str(tmp_path / "seen.db"), CRAWLER_RESPECT_ROBOTS=False,
-                        CRAWLER_PAGE_DELAY_SECONDS=0):
-        service = CrawlerService(interval_minutes=60, indexer=indexer,
-                                 fetcher_factory=lambda: FakeFetcher(_three_pages()))
-        report = service.run_once()
-    assert report.indexed == 4
+    service = CrawlerService(_settings(tmp_path, sites), indexer=FakeIndexer(),
+                             fetcher_factory=lambda: FakeFetcher(_three_pages()))
+    assert service.run_once().indexed == 4
     assert SeenStore(tmp_path / "seen.db").count() == 4
 
 
-def test_service_stop_ends_start():
-    service = CrawlerService(interval_minutes=60, indexer=FakeIndexer(), fetcher_factory=MagicMock())
+def test_service_stop_ends_start(tmp_path):
+    service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
+                             fetcher_factory=MagicMock())
     service.run_once = MagicMock(side_effect=lambda: service.stop())
     service.start()   # returns instead of sleeping an hour
     service.run_once.assert_called_once()
-
-
-# --- what the property agent sees -------------------------------------------
-
-def test_context_shows_the_listing_link_and_its_currency():
-    context = build_context_from_listings([{"city": "Berlin", "price": 1200.0, "currency": "EUR",
-                                            "url": "https://portal.example/offer/1", "text": "Flat"}])
-    assert "Location: Berlin" in context
-    assert "Price: 1200 EUR" in context
-    assert "Link: https://portal.example/offer/1" in context
-
-
-def test_context_leaves_out_fields_a_listing_does_not_have():
-    context = build_context_from_listings([{"price": 900, "rooms": float("nan")}])
-    assert context == "Listing 1\nPrice: 900"
-    assert build_context_from_listings([]) == "No listings found."
 
 
 def test_a_site_without_a_currency_shows_the_bare_price():

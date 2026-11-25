@@ -9,7 +9,7 @@ It starts four services:
 | REST API | `uv run python -m clients.rest.main` | `http://<host>:8000` |
 | Telegram bot | `uv run python -m clients.telegram.main` | your bot, in Telegram |
 | Streamlit UI | `uv run python -m clients.streamlit.main` | `http://<host>:8501` |
-| Property crawler | `uv run python -m agents.property.crawler.main` | — (fills Pinecone every hour; see [docs/property-crawler.md](../docs/property-crawler.md)) |
+| Property crawler | `uv run python -m property_crawler.main` | — (fills Pinecone every hour; see [property_crawler/README.md](../property_crawler/README.md)) |
 
 Then, every minute, it:
 
@@ -119,7 +119,8 @@ systemctl --user disable uk-agents
 
 | File | What is in it |
 |---|---|
-| `logs/agent.log` | The application log of all services (rotating) |
+| `logs/agent.log` | The application log of the REST API, Telegram bot and Streamlit UI (rotating) |
+| `logs/crawler.log` | The property crawler's log: every pass, every site (rotating) |
 | `logs/deploy-rest.log`, `logs/deploy-telegram.log`, `logs/deploy-streamlit.log`, `logs/deploy-crawler.log` | Raw output of each service since its last start — look here when a service won't start |
 | `logs/deploy-tests.log` | Output of the last test run — look here when a commit was not deployed |
 | `logs/deploy-playwright.log` | Output of the last `playwright install chromium` |

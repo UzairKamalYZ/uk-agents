@@ -1,8 +1,8 @@
 """
-The crawler's site list (CRAWLER_SITES_FILE, default agents/property/crawler/sites.json).
+The crawler's site list (CRAWLER_SITES_FILE, default sites.json next to this module).
 
 Each site says where its listing pages are and how to read a listing card with CSS
-selectors. See docs/property-crawler.md for every key.
+selectors. See README.md for every key.
 """
 import json
 import logging

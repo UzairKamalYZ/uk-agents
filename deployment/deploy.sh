@@ -101,7 +101,7 @@ preflight() {
 # The Python module a service runs: a client is clients/<name>/main.py.
 module_of() {
     case "$1" in
-        crawler) echo "agents.property.crawler.main" ;;
+        crawler) echo "property_crawler.main" ;;
         *) echo "clients.$1.main" ;;
     esac
 }

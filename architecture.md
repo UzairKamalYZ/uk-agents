@@ -136,4 +136,4 @@ flowchart TB
     class AGENTSJSON,MCPJSON,LS config
 ```
 
-Property data is indexed into Pinecone by the hourly crawler `agents.property.crawler.main` (Playwright, `agents/property/crawler/sites.json`); `agents.property.gatherers.data_collector` (URLs) is the older one-shot ingester.
+Property data is indexed into Pinecone by the hourly crawler `property_crawler.main`, a separate package that imports nothing from uk-agents (Playwright, `property_crawler/sites.json`); `agents.property.gatherers.data_collector` (URLs) is the older one-shot ingester.

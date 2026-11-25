@@ -43,4 +43,4 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "orchestrator/tests", "clients/tests", "agents"]
+testpaths = ["core/tests", "orchestrator/tests", "clients/tests", "agents", "property_crawler/tests"]

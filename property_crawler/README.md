@@ -1,13 +1,15 @@
 # Property listing crawler
 
-`agents/property/crawler/` keeps the property agent's Pinecone index fresh. Every hour it visits the websites in `sites.json` one at a time. It renders each listing page in headless Chromium (Playwright) so JavaScript-built pages work, reads the listing cards with CSS selectors, and upserts every **new or changed** listing into the same index the property agent searches.
+`property_crawler` keeps a Pinecone index of property listings fresh. Every hour it visits the websites in `sites.json` one at a time. It renders each listing page in headless Chromium (Playwright) so JavaScript-built pages work, reads the listing cards with CSS selectors, and upserts every **new or changed** listing into the index. uk-agents' property agent searches that index.
+
+It is a self-contained package that imports nothing from uk-agents (a test enforces this), so it can move to its own repository unchanged. See [Moving to its own repository](#moving-to-its-own-repository). It shares only an interface with uk-agents: the Pinecone index, the embedding model and the metadata keys.
 
 It runs on the Ubuntu server as one of the services of `deployment/deploy.sh` (see [Running it on the server](#running-it-on-the-server)). By hand:
 
 ```bash
 uv run playwright install chromium                 # the browser (deploy.sh does this on every build)
-python -m agents.property.crawler.main             # a pass now, then every CRAWLER_INTERVAL_MINUTES
-python -m agents.property.crawler.main --once      # one pass, then exit
+python -m property_crawler.main             # a pass now, then every CRAWLER_INTERVAL_MINUTES
+python -m property_crawler.main --once      # one pass, then exit
 ```
 
 ## One pass
@@ -94,13 +96,13 @@ The shipped `sites.json` crawls Immoweb (see below) and holds one disabled examp
 
 ## What lands in Pinecone
 
-Each listing is embedded as text, for example `Sunny 2-bed. Apartment in Ghent. Price 1150 EUR. 2 rooms. 52 square meters. …`. The text comes with metadata that `core/src/model/context_builder.py` shows the agent: `text`, `city`, `price`, `currency`, `rooms`, `squareMeters`, `type` and `url` (shown to the agent as `Link:`), plus `source: "crawler"`, `site`, `title`, `crawled_at` (shown as `Last seen:`) and any extra fields.
+Each listing is embedded as text, for example `Sunny 2-bed. Apartment in Ghent. Price 1150 EUR. 2 rooms. 52 square meters. …`. Queries must be embedded with the same model (`SENTENCE_TRANSFORMER_MODEL`), and the index is searched in its default namespace. The text comes with metadata, which uk-agents' `core/src/model/context_builder.py` shows the property agent: `text`, `city`, `price`, `currency`, `rooms`, `squareMeters`, `type` and `url` (shown to the agent as `Link:`), plus `source: "crawler"`, `site`, `title`, `crawled_at` (shown as `Last seen:`) and any extra fields.
 
 ## Immoweb
 
 `sites.json` crawls `https://www.immoweb.be/en/search/house-and-apartment/for-rent?countries=BE&orderBy=newest`, houses and apartments for rent anywhere in Belgium, newest first. That's 3 result pages (about 90 listings) per pass. To narrow it, change the search on immoweb.be and paste the resulting URL into `start_urls`. Keep `orderBy=newest`, so the crawler stops at the first page with nothing new.
 
-**Unverified.** When this was set up, Immoweb's Cloudflare refused every automated request from a datacenter IP, robots.txt included (HTTP 403, "Just a moment…"). So the selectors (`article.card--result`, `.card--result__price`, `.card__information--property`, `.card__information--locality`, `a.pagination__link--next`) follow Immoweb's last known markup and are not checked against the live site. On the server, look at the first pass in `logs/agent.log`:
+**Unverified.** When this was set up, Immoweb's Cloudflare refused every automated request from a datacenter IP, robots.txt included (HTTP 403, "Just a moment…"). So the selectors (`article.card--result`, `.card--result__price`, `.card__information--property`, `.card__information--locality`, `a.pagination__link--next`) follow Immoweb's last known markup and are not checked against the live site. On the server, look at the first pass in `logs/crawler.log`:
 
 | Log says | Meaning |
 |---|---|
@@ -115,8 +117,8 @@ Check Immoweb's terms of use before relying on this. Listing portals often forbi
 The property agent searches the whole index, so vectors written before the crawler (the old Polish CSV data) keep showing up until they are deleted. Every vector the crawler writes has an id starting with `crawl-`; this deletes all the others:
 
 ```bash
-python -m agents.property.crawler.purge          # dry run: how many would go
-python -m agents.property.crawler.purge --yes    # delete them
+python -m property_crawler.purge          # dry run: how many would go
+python -m property_crawler.purge --yes    # delete them
 ```
 
 It deletes from `PINECONE_INDEX_NAME`, in the default namespace, and can't be undone.
@@ -125,9 +127,9 @@ It deletes from `PINECONE_INDEX_NAME`, in the default namespace, and can't be un
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CRAWLER_SITES_FILE` | `agents/property/crawler/sites.json` | Site list |
+| `CRAWLER_SITES_FILE` | `property_crawler/sites.json` | Site list |
 | `CRAWLER_INTERVAL_MINUTES` | `60` | Minutes between the end of one pass and the start of the next |
-| `CRAWLER_DB_FILE` | per-user data dir `/crawler/seen.db` | Which listings are already indexed (delete it to re-index everything) |
+| `CRAWLER_DB_FILE` | per-user data dir `/property-crawler/seen.db` (Linux: `~/.local/share/property-crawler/seen.db`) | Which listings are already indexed (delete it to re-index everything) |
 | `CRAWLER_HEADLESS` | `true` | `false` shows the browser window (debugging selectors) |
 | `CRAWLER_TIMEOUT_SECONDS` | `30` | Page load / `wait_for` timeout |
 | `CRAWLER_PAGE_DELAY_SECONDS` | `8` | Random wait between page loads: this many seconds to twice as many |
@@ -136,13 +138,15 @@ It deletes from `PINECONE_INDEX_NAME`, in the default namespace, and can't be un
 | `CRAWLER_RESPECT_ROBOTS` | `true` | Skip URLs the site's robots.txt disallows |
 | `CRAWLER_BROWSER_PATH` | _(empty)_ | A Chromium binary to use instead of Playwright's own |
 
-Pinecone and the embedding model come from the usual `PINECONE_*` and `SENTENCE_TRANSFORMER_MODEL` settings.
+| `PINECONE_API_KEY` / `PINECONE_INDEX_NAME` | — | The index listings are written to (created if missing: serverless, cosine, AWS us-east-1) |
+| `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model, which must be the one the searching app uses |
+
+Settings are read from the environment and from `.env` in the repository root (`property_crawler/settings.py`). Inside uk-agents, that is uk-agents' own `.env`.
 
 ## Good to know
 
 - **Check each site's terms of use.** Many listing portals forbid scraping. Some block headless browsers or show a CAPTCHA. The crawler does not try to get around either: it backs off (see [Wait, stop and see](#wait-stop-and-see)).
 - **Listings are not removed** when they disappear from a site. `crawled_at` tells you how fresh a listing is.
-- The older `agents/property/gatherers/data_collector.py` (requests + regex over `urls.txt`) still works for static pages without per-site selectors.
 
 ## Running it on the server
 
@@ -152,11 +156,21 @@ Pinecone and the embedding model come from the usual `PINECONE_*` and `SENTENCE_
 cd ~/uk-agents
 uv sync
 sudo .venv/bin/playwright install-deps chromium   # the system libraries Chromium needs (apt)
-uv run python -m agents.property.crawler.main --once   # try a pass; check logs/agent.log
+uv run python -m property_crawler.main --once   # try a pass; check logs/crawler.log
 ```
 
 - **No screen is needed.** `CRAWLER_HEADLESS=true` is the default. Leave it on: `false` needs a display, and the server has none.
 - **Run it as your normal user, not root.** The browser download goes to `~/.cache/ms-playwright` of the user running `deploy.sh`.
-- **Logs**: `logs/agent.log` (every pass, every site) and `logs/deploy-crawler.log` (the process's raw output). A failed browser download is in `logs/deploy-playwright.log`.
+- **Logs**: `logs/crawler.log` (every pass, every site; rotating) and `logs/deploy-crawler.log` (the process's raw output). A failed browser download is in `logs/deploy-playwright.log`.
 - **Memory**: about 0.5–1 GB while a pass runs (embedding model plus Chromium). Chromium is closed between passes.
 - **To leave it out**, set `DEPLOY_SERVICES="rest telegram streamlit"`.
+
+## Moving to its own repository
+
+Copy `property_crawler/` into the new repository's root and add:
+
+- **`pyproject.toml`** with Python ≥ 3.13 and the dependencies `playwright`, `beautifulsoup4`, `requests`, `python-dotenv`, `numpy`, `pinecone` and `sentence-transformers`, plus `pytest` for development, with `testpaths = ["property_crawler/tests"]`.
+- **`.env`** with the `CRAWLER_*`, `PINECONE_*` and `SENTENCE_TRANSFORMER_MODEL` settings above.
+- **A way to run it on the server.** For example, a systemd unit running `uv run python -m property_crawler.main`. In uk-agents, `deployment/deploy.sh` does this; afterwards, set `DEPLOY_SERVICES="rest telegram streamlit"` there.
+
+Then delete `property_crawler/` from uk-agents and drop `property_crawler/tests` from its `testpaths`. uk-agents keeps reading the same index, so nothing else changes. The tests already run from a copy outside uk-agents (`python -m pytest property_crawler/tests` from the copy's root).

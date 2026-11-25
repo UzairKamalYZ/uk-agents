@@ -45,21 +45,6 @@ class Config:
     URLS_FILE = _project_path("URLS_FILE", "agents/property/urls.txt")
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-    # Property listing crawler (python -m agents.property.crawler.main)
-    CRAWLER_SITES_FILE = _project_path("CRAWLER_SITES_FILE", "agents/property/crawler/sites.json")
-    CRAWLER_INTERVAL_MINUTES = int(os.getenv("CRAWLER_INTERVAL_MINUTES", "60"))
-    # SQLite record of listings already indexed — only new or changed listings are embedded
-    CRAWLER_DB_FILE = _data_path("CRAWLER_DB_FILE", _user_data_dir() / "crawler" / "seen.db")
-    CRAWLER_HEADLESS = os.getenv("CRAWLER_HEADLESS", "true").lower() == "true"
-    CRAWLER_TIMEOUT_SECONDS = float(os.getenv("CRAWLER_TIMEOUT_SECONDS", "30"))
-    # Random wait between page loads: CRAWLER_PAGE_DELAY_SECONDS … twice that
-    CRAWLER_PAGE_DELAY_SECONDS = float(os.getenv("CRAWLER_PAGE_DELAY_SECONDS", "8"))
-    # A site that refuses the crawler is skipped for this long, doubled per repeated block, up to the max
-    CRAWLER_BACK_OFF_MINUTES = int(os.getenv("CRAWLER_BACK_OFF_MINUTES", "60"))
-    CRAWLER_MAX_BACK_OFF_HOURS = int(os.getenv("CRAWLER_MAX_BACK_OFF_HOURS", "24"))
-    CRAWLER_RESPECT_ROBOTS = os.getenv("CRAWLER_RESPECT_ROBOTS", "true").lower() == "true"
-    # Chromium binary; empty → the one `playwright install chromium` downloaded
-    CRAWLER_BROWSER_PATH = os.getenv("CRAWLER_BROWSER_PATH", "")
     # Property agent prompts
     PROMPT_FILE = _project_path("PROMPT_FILE", "agents/property/prompts/System_Prompt.txt")
     # Telegram / LangSmith integrations

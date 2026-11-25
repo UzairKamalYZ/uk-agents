@@ -130,7 +130,6 @@ uk-agents/
 │   │   └── prompts/System_Prompt.txt
 │   ├── property/
 │   │   ├── agent.py                  # PropertySearchAgent(BaseAgent) — RAG
-│   │   ├── crawler/                  # Hourly Playwright crawler → Pinecone (sites.json)
 │   │   ├── gatherers/                # URL ingestion (urls.txt)
 │   │   ├── scraping/                 # HTTP (BeautifulSoup) + Selenium scrapers
 │   │   ├── urls.txt                  # URLs for the URL ingester (one per line, # comments)
@@ -673,11 +672,11 @@ Pass the returned `session_id` on the next call to continue the conversation; wi
 
 ```bash
 uv run playwright install chromium                 # once per machine
-python -m agents.property.crawler.main             # a pass every CRAWLER_INTERVAL_MINUTES (default 60)
-python -m agents.property.crawler.main --once      # one pass, then exit
+python -m property_crawler.main             # a pass every CRAWLER_INTERVAL_MINUTES (default 60)
+python -m property_crawler.main --once      # one pass, then exit
 ```
 
-Visits each website in `agents/property/crawler/sites.json` in turn with headless Chromium, reads listing cards with per-site CSS selectors, follows the next-page links, and upserts only new or changed listings into the Pinecone index. On a server, `deployment/deploy.sh` runs it as one of its services. Full reference: [docs/property-crawler.md](docs/property-crawler.md).
+`property_crawler/` is a separate, self-contained package (it imports nothing from uk-agents and is meant to become its own repository). It visits each website in `property_crawler/sites.json` in turn with headless Chromium, reads listing cards with per-site CSS selectors, follows the next-page links, and upserts only new or changed listings into the Pinecone index the property agent searches. On a server, `deployment/deploy.sh` runs it as one of its services. Full reference: [property_crawler/README.md](property_crawler/README.md).
 
 ### From URLs
 
