@@ -15,7 +15,7 @@ from property_crawler.indexer import ListingIndexer
 from property_crawler.main import CrawlerService
 from property_crawler.purge import purge
 from property_crawler.settings import PACKAGE_DIR, ROOT, Settings
-from property_crawler.vector_index import VectorIndex
+from property_crawler.vector_index import IncompatibleIndexError, VectorIndex, check_compatible
 from property_crawler.seen_store import SeenStore
 from property_crawler.sites import Site, FieldSelector, load_sites
 
@@ -486,6 +486,38 @@ def test_vector_index_deletes_in_chunks_of_1000():
     index = _vector_index()
     index.delete([str(i) for i in range(2500)])
     assert [len(c.kwargs["ids"]) for c in index._index.delete.call_args_list] == [1000, 1000, 500]
+
+
+def _description(dimension=384, fields=None):
+    schema = None if fields is None else MagicMock(fields=fields)
+    return MagicMock(dimension=dimension, schema=schema)
+
+
+def test_compatible_index_passes_the_check():
+    check_compatible(_description(), "listings", 384)
+
+
+def test_index_with_a_document_schema_is_rejected():
+    with pytest.raises(IncompatibleIndexError, match="document schema"):
+        check_compatible(_description(1024, {"title": 1, "chunk_text": 2}), "listings", 384)
+
+
+def test_index_with_another_dimension_is_rejected():
+    with pytest.raises(IncompatibleIndexError, match="dimension 1024"):
+        check_compatible(_description(1024), "listings", 384)
+
+
+def test_vector_index_checks_an_existing_index_before_using_it():
+    index = VectorIndex("key", "listings", "some-model")
+    index._model = MagicMock()
+    index._model.get_sentence_embedding_dimension.return_value = 384
+    client = MagicMock()
+    client.list_indexes.return_value.names.return_value = ["listings"]
+    client.describe_index.return_value = _description(1024)
+    with patch("pinecone.Pinecone", return_value=client):
+        with pytest.raises(IncompatibleIndexError):
+            index.index
+    client.create_index.assert_not_called()
 
 
 def test_vector_index_needs_pinecone_settings():
