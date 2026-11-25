@@ -13,13 +13,17 @@ AVAILABLE, UNDER_OFFER, SOLD, RENTED = "available", "under offer", "sold", "rent
 
 
 def _rx(*words: str) -> re.Pattern:
-    return re.compile(r"(?<![\w-])(?:" + "|".join(words) + r")(?![\w])", re.IGNORECASE)
+    # Whole words only; a pattern that starts with a symbol ("/month") may follow a digit ("€950/month")
+    return re.compile(r"(?:(?<![\w-])|(?=[^\w\s]))(?:" + "|".join(words) + r")(?![\w])", re.IGNORECASE)
 
 
 # URL path / query words, e.g. /for-rent/, /te-koop/, ?transaction=sale
-_URL_RENT = re.compile(r"(?:for-rent|to-rent|te-huur|a-louer|à-louer|location|huren|rent|rental|lettings?|huur)",
+# Whole words of the path or query ("current" and "wholesale" don't count; nor does "location=",
+# a search parameter on many sites, though it means "rental" in French paths)
+_URL_RENT = re.compile(r"(?<![a-z])(?:for-rent|to-rent|te-huur|a-louer|à-louer|huren|rent|rentals?|lettings?|huur)"
+                       r"(?![a-z])", re.IGNORECASE)
+_URL_SALE = re.compile(r"(?<![a-z])(?:for-sale|te-koop|a-vendre|à-vendre|vente|kopen|buy|sale|koop)(?![a-z])",
                        re.IGNORECASE)
-_URL_SALE = re.compile(r"(?:for-sale|te-koop|a-vendre|à-vendre|vente|kopen|buy|sale|koop)", re.IGNORECASE)
 
 _TEXT_RENT = _rx(r"for rent", r"to rent", r"to let", r"te huur", r"à louer", r"a louer",
                  r"per month", r"/\s?month", r"/\s?mo", r"p\.?c\.?m", r"per maand", r"/\s?maand", r"par mois",

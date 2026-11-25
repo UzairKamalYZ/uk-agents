@@ -193,6 +193,12 @@ def test_a_field_pattern_keeps_its_first_group():
     ("https://portal.example/search", "Huis te koop, vraagprijs € 325.000", "sale"),
     ("https://portal.example/search", "Nice flat, €950", None),
     ("https://rent-and-sale.example/search", "", None),     # the host's own words don't count
+    ("https://portal.example/buy/search?location=gent", "", "sale"),   # "location=" is a search parameter
+    ("https://portal.example/current-offers", "", None),     # "rent" inside a word doesn't count
+    ("https://portal.example/wholesale", "", None),
+    ("https://portal.example/search?transaction=rent", "", "rent"),
+    ("https://portal.example/search", "Flat €950/month", "rent"),
+    ("https://portal.example/search", "Flat 950€/mois", "rent"),
 ])
 def test_detect_deal_reads_the_url_then_the_words(url, text, expected):
     assert detect_deal(url, text) == expected
