@@ -13,6 +13,25 @@ logger = logging.getLogger(__name__)
 DELETE_BATCH = 1000   # Pinecone deletes at most 1000 ids per call
 
 
+class IncompatibleIndexError(RuntimeError):
+    """The named Pinecone index exists but cannot hold this crawler's vectors."""
+
+
+def check_compatible(description, index_name: str, dimension: int) -> None:
+    """Raise IncompatibleIndexError unless the index takes plain vectors of `dimension`."""
+    schema = getattr(description, "schema", None)
+    if schema is not None and getattr(schema, "fields", None):
+        raise IncompatibleIndexError(
+            f"Pinecone index {index_name!r} has a document schema (fields: "
+            f"{', '.join(schema.fields)}) and only accepts writes through the documents "
+            "API. Set PINECONE_INDEX_NAME to a new index name; the crawler creates it.")
+    if description.dimension != dimension:
+        raise IncompatibleIndexError(
+            f"Pinecone index {index_name!r} has dimension {description.dimension}, but "
+            f"the embedding model produces {dimension}. Set PINECONE_INDEX_NAME to a new "
+            "index name (the crawler creates it) or use the matching model.")
+
+
 class VectorIndex:
 
     def __init__(self, api_key: str, index_name: str, model_name: str):
@@ -36,14 +55,17 @@ class VectorIndex:
         if self._index is None:
             from pinecone import Pinecone, ServerlessSpec
             client = Pinecone(api_key=self._api_key)
+            dimension = self.model.get_sentence_embedding_dimension()
             if self._index_name not in client.list_indexes().names():
                 logger.info("[crawler] creating Pinecone index %s", self._index_name)
                 client.create_index(
                     name=self._index_name,
-                    dimension=self.model.get_sentence_embedding_dimension(),
+                    dimension=dimension,
                     metric="cosine",
                     spec=ServerlessSpec(cloud="aws", region="us-east-1"),
                 )
+            else:
+                check_compatible(client.describe_index(self._index_name), self._index_name, dimension)
             self._index = client.Index(self._index_name)
         return self._index
 
