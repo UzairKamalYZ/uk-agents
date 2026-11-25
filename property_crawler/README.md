@@ -81,7 +81,7 @@ The crawler never tries to get *past* a block. It doesn't solve CAPTCHAs, fake a
 | `name` | required | Shown in logs, stored as the `site` metadata |
 | `start_urls` (or `url`) | required | Listing pages to start from. Sort them newest first, so `stop_when_seen` can stop early |
 | `listing_selector` | required | CSS selector matching one listing card |
-| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr", "pattern"}`: an attribute instead of the text, and/or a regex whose first group is kept (`"(\\d+)\\s*bdr"` reads `2` from `2 bdr. 85 m²`). `price`, `rooms` and `area` are parsed into numbers (`3 500 €` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description` and `url` are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
+| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr", "pattern"}`: an attribute instead of the text, and/or a regex whose first group is kept (`"(\\d+)\\s*bdr"` reads `2` from `2 bdr. 85 m²`). `price`, `rooms` and `area` are parsed into numbers (`3 500 €` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description`, `url`, `deal` (a "For rent" / "Te koop" label), `availability` (a status badge such as "Under offer") and `photo` (use `"attr": "src"`) are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
 | `link_selector` | `a[href]` | Link to the listing inside the card. It is the listing's identity. A card without a link gets an ID from its text |
 | `next_page_selector` | none | Link to the next results page |
 | `max_pages` | `1` | Pages followed per start URL |
@@ -90,17 +90,51 @@ The crawler never tries to get *past* a block. It doesn't solve CAPTCHAs, fake a
 | `stop_when_seen` | `true` | Stop paging when a page has no new or changed listing |
 | `city`, `property_type` | none | Used when the card doesn't name one |
 | `currency` | none | Shown with the price, e.g. `EUR` |
+| `deal` | detected | `rent` or `sale` when every listing on the site is one (`buy`/`sell` are accepted too). Left out, it is detected per listing (see below) |
 | `enabled` | `true` | `false` keeps the entry without crawling it |
 
 The shipped `sites.json` crawls Immoweb (see below) and holds one disabled example. To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
 
+## What the crawler works out for each listing
+
+Besides the fields read with selectors, every listing is classified (`classify.py`, English, Dutch and French keywords). A field or `sites.json` key the site provides always wins; detection only fills what's missing.
+
+| Attribute | Values | How |
+|---|---|---|
+| `deal` | `rent`, `sale` or none | The `deal` field, then the site's `deal`, then the page URL (`/for-rent/`, `/te-koop/`, `/a-vendre/` …), then the card's words (`€950 / month`, `vraagprijs`, `for sale` …) |
+| `availability` | `available`, `under offer`, `sold`, `rented` | The `availability` field (a badge), else status words anywhere on the card (`under option`, `sold STC`, `verkocht`, `sous compromis` …). A card with no such mark is `available` |
+| `property_type` | `Apartment`, `House`, `Studio`, `Villa`, `Penthouse`, `Duplex`, `Loft`, `Room`, `Land`, `Garage`, `Office`, `Commercial`, … | The `type` field, then the site's `property_type`, then the title, then the card text |
+| `city` / `postcode` | `Ixelles` / `1050` | The locality is split: `1050 Ixelles`, `Ghent (9000)`, `1012 AB Amsterdam` |
+
+So one site can be crawled for rent *and* sale: give it one start URL of each (Immoweb does). A change of status or price changes the listing's text, so it is re-embedded and its stored details are updated.
+
+## The listings table
+
+`CRAWLER_DB_FILE` (`seen.db`) keeps every listing's details, so other apps can list and filter listings without Pinecone. **my-stats' Properties page reads it read-only**, so these columns are a contract: add columns freely, but don't rename or drop them.
+
+| Column | Meaning |
+|---|---|
+| `id`, `site`, `url` | Vector id (`crawl-…`), site name, listing link |
+| `title`, `description`, `photo` | As read from the card (`photo` is an absolute image URL) |
+| `city`, `postcode` | Split from the locality |
+| `price`, `price_text`, `currency` | Parsed number, the text as shown, e.g. `EUR` |
+| `rooms`, `area` | Bedrooms / rooms, m² |
+| `property_type`, `deal`, `availability` | See above |
+| `extra` | JSON object of the site's other fields |
+| `first_seen` | When the crawler first found it (ISO 8601, UTC) — "newest" means this |
+| `updated_at` | When its details last changed (e.g. a price drop) |
+| `last_seen` | The last pass whose pages showed it. The crawler reads only the newest pages, so an old `last_seen` means "dropped out of the newest results", not necessarily "gone" |
+| `content_hash` | Changes when anything indexed changes |
+
+A `seen.db` from before these columns existed gets them added on the next start; its old rows keep empty details until the listing is seen again.
+
 ## What lands in Pinecone
 
-Each listing is embedded as text, for example `Sunny 2-bed. Apartment in Ghent. Price 1150 EUR. 2 rooms. 52 square meters. …`. Queries must be embedded with the same model (`SENTENCE_TRANSFORMER_MODEL`), and the index is searched in its default namespace. The text comes with metadata, which uk-agents' `core/src/model/context_builder.py` shows the property agent: `text`, `city`, `price`, `currency`, `rooms`, `squareMeters`, `type` and `url` (shown to the agent as `Link:`), plus `source: "crawler"`, `site`, `title`, `crawled_at` (shown as `Last seen:`) and any extra fields.
+Each listing is embedded as text, for example `Sunny 2-bed. Apartment in Ghent. Price 1150 EUR. 2 rooms. 52 square meters. …`. Queries must be embedded with the same model (`SENTENCE_TRANSFORMER_MODEL`), and the index is searched in its default namespace. The text comes with metadata, which uk-agents' `core/src/model/context_builder.py` shows the property agent: `text`, `city`, `price`, `currency`, `rooms`, `squareMeters`, `type` and `url` (shown to the agent as `Link:`), plus `source: "crawler"`, `site`, `title`, `deal` (shown as `For:`), `availability` (shown as `Status:`), `postcode`, `photo`, `crawled_at` (shown as `Last seen:`) and any extra fields.
 
 ## Immoweb
 
-`sites.json` crawls `https://www.immoweb.be/en/search/house-and-apartment/for-rent?countries=BE&orderBy=newest`, houses and apartments for rent anywhere in Belgium, newest first. That's 3 result pages (about 90 listings) per pass. To narrow it, change the search on immoweb.be and paste the resulting URL into `start_urls`. Keep `orderBy=newest`, so the crawler stops at the first page with nothing new.
+`sites.json` crawls two Immoweb searches, newest first: houses and apartments `for-rent` and `for-sale` anywhere in Belgium. That's up to 3 result pages (about 90 listings) per search per pass; the URL tells the crawler which listings are for rent and which for sale. To narrow it, change the search on immoweb.be and paste the resulting URL into `start_urls`. Keep `orderBy=newest`, so the crawler stops at the first page with nothing new.
 
 **Unverified.** When this was set up, Immoweb's Cloudflare refused every automated request from a datacenter IP, robots.txt included (HTTP 403, "Just a moment…"). So the selectors (`article.card--result`, `.card--result__price`, `.card__information--property`, `.card__information--locality`, `a.pagination__link--next`) follow Immoweb's last known markup and are not checked against the live site. On the server, look at the first pass in `logs/crawler.log`:
 

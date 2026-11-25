@@ -1,12 +1,15 @@
 import json
 import logging
 import os
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from property_crawler.classify import (deal_from_label, detect_availability, detect_deal, detect_type,
+                                       split_locality)
 from property_crawler.blocking import block_reason, parse_retry_after
 from property_crawler.crawler import PropertyCrawler
 from property_crawler.extractor import Listing, extract_listings, next_page_url, parse_number
@@ -71,7 +74,7 @@ def test_extract_listings_reads_fields_and_makes_links_absolute():
     assert (listing.title, listing.price, listing.rooms, listing.area) == ("Flat 7", 3500, 2, 48.5)
     assert listing.city == "Liège"
     assert listing.property_type == "Apartment"
-    assert "Flat 7. Apartment in Liège. Price 3500 EUR. 2 rooms. 48.5 square meters." in listing.text
+    assert "Flat 7. Apartment for rent in Liège. Price 3500 EUR. 2 rooms. 48.5 square meters." in listing.text
 
 
 def test_extract_listings_falls_back_to_the_site_city_and_counts_a_repeated_ad_once():
@@ -94,7 +97,8 @@ def test_unknown_fields_are_kept_as_extra_metadata():
     html = _page(['<article class="offer"><a href="/o/1"><h2>A</h2></a>'
                   '<span class="floor">3/5</span><img src="/p.jpg"></article>'])
     [listing] = extract_listings(html, site, "https://portal.example/")
-    assert listing.extra == {"floor": "3/5", "photo": "/p.jpg"}
+    assert listing.extra == {"floor": "3/5"}
+    assert listing.photo == "https://portal.example/p.jpg"
     assert listing.metadata("now")["floor"] == "3/5"
 
 
@@ -144,6 +148,7 @@ def test_shipped_sites_file_crawls_immoweb_only():
     assert [s.name for s in sites] == ["immoweb"]
     assert sites[0].start_urls[0].startswith("https://www.immoweb.be/en/search/")
     assert sites[0].currency == "EUR"
+    assert [detect_deal(u) for u in sites[0].start_urls] == ["rent", "sale"]
 
 
 def test_immoweb_config_reads_a_result_card():
@@ -162,7 +167,8 @@ def test_immoweb_config_reads_a_result_card():
     url = immoweb.start_urls[0]
     [listing] = extract_listings(_page([card]), immoweb, url)
     assert listing.url.endswith("/12345678")
-    assert (listing.price, listing.rooms, listing.area, listing.city) == (1250, 2, 85, "1050 Ixelles")
+    assert (listing.price, listing.rooms, listing.area, listing.city) == (1250, 2, 85, "Ixelles")
+    assert (listing.postcode, listing.deal, listing.availability) == ("1050", "rent", "available")
     assert next_page_url(_page([card]), immoweb, url).endswith("page=2")
 
 
@@ -174,6 +180,94 @@ def test_a_field_pattern_keeps_its_first_group():
     [listing] = extract_listings(html, site, "https://portal.example/")
     assert (listing.rooms, listing.area) == (3, 120)
     assert "garden" not in listing.extra
+
+
+# --- classification ---------------------------------------------------------
+
+@pytest.mark.parametrize("url, text, expected", [
+    ("https://www.immoweb.be/en/search/house/for-sale?page=2", "", "sale"),
+    ("https://www.immoweb.be/en/classified/apartment/for-rent/ixelles/1050/1", "", "rent"),
+    ("https://www.zimmo.be/nl/te-koop/", "", "sale"),
+    ("https://portal.example/a-louer/appartement", "", "rent"),
+    ("https://portal.example/search", "Flat €950 / month", "rent"),
+    ("https://portal.example/search", "Huis te koop, vraagprijs € 325.000", "sale"),
+    ("https://portal.example/search", "Nice flat, €950", None),
+    ("https://rent-and-sale.example/search", "", None),     # the host's own words don't count
+    ("https://portal.example/buy/search?location=gent", "", "sale"),   # "location=" is a search parameter
+    ("https://portal.example/current-offers", "", None),     # "rent" inside a word doesn't count
+    ("https://portal.example/wholesale", "", None),
+    ("https://portal.example/search?transaction=rent", "", "rent"),
+    ("https://portal.example/search", "Flat €950/month", "rent"),
+    ("https://portal.example/search", "Flat 950€/mois", "rent"),
+])
+def test_detect_deal_reads_the_url_then_the_words(url, text, expected):
+    assert detect_deal(url, text) == expected
+
+
+@pytest.mark.parametrize("label, expected", [
+    ("For rent", "rent"), ("Te koop", "sale"), ("SALE", "sale"), ("À louer", "rent"), ("", None),
+])
+def test_deal_from_label(label, expected):
+    assert deal_from_label(label) == expected
+
+
+@pytest.mark.parametrize("status, text, expected", [
+    ("", "Bright flat, 2 bedrooms", "available"),
+    ("Under option", "", "under offer"),
+    ("Sold STC", "", "under offer"),
+    ("Let", "", "rented"),
+    ("", "Verkocht! Prachtige woning", "sold"),
+    ("", "Let us show you this lovely home", "available"),   # "let" in prose is not a status
+    ("", "Recently renovated, can be rented furnished", "available"),
+    ("", "Sous compromis", "under offer"),
+])
+def test_detect_availability(status, text, expected):
+    assert detect_availability(status, text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Apartment for rent", "Apartment"), ("Studio apartment", "Studio"), ("Villa with pool", "Villa"),
+    ("Charming town house", "House"), ("Penthouse with terrace", "Penthouse"),
+    ("Bouwgrond 800 m²", "Land"), ("Appartement te huur", "Apartment"), ("Lovely place", None),
+])
+def test_detect_type(text, expected):
+    assert detect_type(text) == expected
+
+
+@pytest.mark.parametrize("locality, expected", [
+    ("1050 Ixelles", ("Ixelles", "1050")), ("9000 GENT", ("Gent", "9000")), ("Ghent (9000)", ("Ghent", "9000")),
+    ("1012 AB Amsterdam", ("Amsterdam", "1012 AB")), ("75011 Paris", ("Paris", "75011")),
+    ("Leuven", ("Leuven", None)), ("", (None, None)), (None, (None, None)),
+])
+def test_split_locality(locality, expected):
+    assert split_locality(locality) == expected
+
+
+def test_extracted_listing_is_classified_from_its_card():
+    site = _site(property_type=None, city=None,
+                 fields={**_site().fields, "availability": FieldSelector(".badge")})
+    card = ('<article class="offer"><a href="/o/9"><h2>Villa with garden</h2></a><span class="price">€ 495.000</span>'
+            '<span class="badge">Under offer</span><span class="city">3000 Leuven</span></article>')
+    [listing] = extract_listings(_page([card]), site, "https://portal.example/for-sale?page=1")
+    assert (listing.property_type, listing.deal, listing.availability) == ("Villa", "sale", "under offer")
+    assert (listing.city, listing.postcode, listing.price) == ("Leuven", "3000", 495000)
+    assert "Villa for sale in Leuven. Postcode 3000. Status: under offer. Price 495000 EUR." in listing.text
+    meta = listing.metadata("2026-11-25T10:00:00+00:00")
+    assert (meta["deal"], meta["availability"], meta["postcode"]) == ("sale", "under offer", "3000")
+
+
+def test_site_deal_wins_over_detection_and_is_validated():
+    [listing] = extract_listings(_page([_card(1)]), _site(deal="sale"), "https://portal.example/rent?page=1")
+    assert listing.deal == "sale"
+
+
+def test_a_site_with_an_unknown_deal_is_skipped(tmp_path, caplog):
+    path = tmp_path / "sites.json"
+    path.write_text(json.dumps({"sites": [
+        {"name": "a", "url": "https://a.example/", "listing_selector": "li", "deal": "swap"},
+        {"name": "b", "url": "https://b.example/", "listing_selector": "li", "deal": "Buy"}]}))
+    assert [(s.name, s.deal) for s in load_sites(path)] == [("b", "sale")]
+    assert "swap" in caplog.text
 
 
 # --- seen store -------------------------------------------------------------
@@ -188,6 +282,41 @@ def test_seen_store_returns_only_new_or_changed_listings(tmp_path):
         fresh = store.unseen([_listing(1), _listing(2, price=900), _listing(3)])
         assert [l.url[-1] for l in fresh] == ["2", "3"]
         assert store.count("portal") == 2
+
+
+def test_seen_store_keeps_listing_details_and_first_seen(tmp_path):
+    db = tmp_path / "seen.db"
+    listing = Listing(site="portal", url="https://portal.example/offer/1", title="Flat 1", city="Ghent",
+                      postcode="9000", price=950, currency="EUR", rooms=2, area=60, property_type="Apartment",
+                      deal="rent", photo="https://portal.example/1.jpg", extra={"floor": "3"})
+    with SeenStore(db) as store:
+        store.touch([listing], when="2026-11-20T10:00:00+00:00")
+        listing.price, listing.availability = 900, "under offer"
+        store.touch([listing], when="2026-11-24T10:00:00+00:00")
+        store.seen_again([listing], when="2026-11-25T10:00:00+00:00")
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    row = dict(conn.execute("SELECT * FROM listings").fetchone())
+    assert (row["first_seen"], row["updated_at"], row["last_seen"]) == (
+        "2026-11-20T10:00:00+00:00", "2026-11-24T10:00:00+00:00", "2026-11-25T10:00:00+00:00")
+    assert (row["price"], row["availability"], row["deal"], row["city"], row["postcode"]) == (
+        900, "under offer", "rent", "Ghent", "9000")
+    assert json.loads(row["extra"]) == {"floor": "3"}
+
+
+def test_seen_store_adds_detail_columns_to_an_old_database(tmp_path):
+    db = tmp_path / "seen.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE listings (id TEXT PRIMARY KEY, site TEXT NOT NULL, url TEXT NOT NULL, "
+                 "content_hash TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)")
+    conn.execute("INSERT INTO listings VALUES ('crawl-old', 'portal', 'u', 'h', '2026-01-01', '2026-01-01')")
+    conn.commit()
+    conn.close()
+    with SeenStore(db) as store:
+        store.touch([_listing(1)])
+        assert store.count() == 2
+    columns = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(listings)")}
+    assert {"deal", "availability", "city", "price", "photo", "updated_at"} <= columns
 
 
 def test_seen_store_survives_a_restart(tmp_path):
@@ -374,6 +503,19 @@ def test_second_pass_indexes_only_new_listings_and_stops_paging_at_known_ones(tm
     _crawler(tmp_path, [_site()], fetcher, indexer).run_once()
     assert [l.title for l in indexer.indexed] == ["Flat 9"]
     assert fetcher.fetched == [BASE + "1", BASE + "2"]   # page 2 held nothing new → stop
+
+
+def test_unchanged_listings_still_on_the_site_move_last_seen_only(tmp_path):
+    pages = {BASE + "1": _page([_card(1)])}
+    _crawler(tmp_path, [_site()], FakeFetcher(pages), FakeIndexer()).run_once()
+    conn = sqlite3.connect(tmp_path / "seen.db")
+    conn.execute("UPDATE listings SET last_seen = '2026-01-01T00:00:00+00:00'")
+    conn.commit()
+    indexer = FakeIndexer()
+    _crawler(tmp_path, [_site()], FakeFetcher(pages), indexer).run_once()
+    assert indexer.indexed == []
+    first_seen, last_seen = conn.execute("SELECT first_seen, last_seen FROM listings").fetchone()
+    assert last_seen > "2026-01-01T00:00:00+00:00" and first_seen <= last_seen
 
 
 def test_a_price_change_is_reindexed(tmp_path):

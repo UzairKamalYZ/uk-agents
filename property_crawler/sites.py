@@ -38,6 +38,7 @@ class Site:
     city: str | None = None            # used when a card names no city
     currency: str | None = None       # e.g. "EUR"; shown with the price
     property_type: str | None = None   # used when a card names no type
+    deal: str | None = None            # "rent" or "sale" when the whole site is one; else detected
     enabled: bool = True
 
 
@@ -45,6 +46,16 @@ def _field(spec) -> FieldSelector:
     if isinstance(spec, str):
         return FieldSelector(spec)
     return FieldSelector(spec["selector"], spec.get("attr"), spec.get("pattern"))
+
+
+def _deal(value) -> str | None:
+    if value in (None, ""):
+        return None
+    value = str(value).strip().lower()
+    aliases = {"rent": "rent", "rental": "rent", "let": "rent", "sale": "sale", "buy": "sale", "sell": "sale"}
+    if value not in aliases:
+        raise ValueError(f"deal must be 'rent' or 'sale', not {value!r}")
+    return aliases[value]
 
 
 def _site(raw: dict) -> Site:
@@ -65,6 +76,7 @@ def _site(raw: dict) -> Site:
         city=raw.get("city"),
         currency=raw.get("currency"),
         property_type=raw.get("property_type"),
+        deal=_deal(raw.get("deal")),
         enabled=bool(raw.get("enabled", True)),
     )
 

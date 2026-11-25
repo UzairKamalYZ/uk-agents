@@ -9,6 +9,8 @@ from urllib.parse import urldefrag, urljoin
 
 from bs4 import BeautifulSoup, Tag
 
+from .classify import (AVAILABLE, deal_from_label, detect_availability, detect_deal, detect_type,
+                       split_locality)
 from .sites import FieldSelector, Site
 
 MAX_DESCRIPTION_CHARS = 1000
@@ -37,6 +39,10 @@ class Listing:
     rooms: float | None = None
     area: float | None = None
     property_type: str | None = None
+    postcode: str | None = None
+    deal: str | None = None              # "rent" or "sale"
+    availability: str = AVAILABLE        # "available", "under offer", "sold" or "rented"
+    photo: str | None = None             # absolute image URL
     extra: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -49,7 +55,12 @@ class Listing:
         """The document that is embedded."""
         parts = [self.title.rstrip(".") + "." if self.title else ""]
         where = f" in {self.city}" if self.city else ""
-        parts.append(f"{self.property_type or 'Property'}{where}.")
+        deal = {"rent": " for rent", "sale": " for sale"}.get(self.deal or "", "")
+        parts.append(f"{self.property_type or 'Property'}{deal}{where}.")
+        if self.postcode:
+            parts.append(f"Postcode {self.postcode}.")
+        if self.availability != AVAILABLE:
+            parts.append(f"Status: {self.availability}.")
         if self.price is not None:
             parts.append(f"Price {_fmt(self.price)}{' ' + self.currency if self.currency else ''}.")
         if self.rooms is not None:
@@ -79,6 +90,10 @@ class Listing:
             "rooms": self.rooms,
             "squareMeters": self.area,
             "type": self.property_type,
+            "postcode": self.postcode,
+            "deal": self.deal,
+            "availability": self.availability,
+            "photo": self.photo,
             "crawled_at": crawled_at,
             **self.extra,
         }
@@ -131,7 +146,8 @@ def _absolute(href: str, page_url: str) -> str:
     return urldefrag(urljoin(page_url, href.strip()))[0]
 
 
-_KNOWN_FIELDS = {"title", "price", "city", "rooms", "area", "type", "description", "url"}
+_KNOWN_FIELDS = {"title", "price", "city", "rooms", "area", "type", "description", "url",
+                 "deal", "availability", "photo"}
 
 
 def extract_listings(html: str, site: Site, page_url: str) -> list[Listing]:
@@ -155,18 +171,28 @@ def extract_listings(html: str, site: Site, page_url: str) -> list[Listing]:
             url = f"{page_url}#listing-{digest}"
 
         price_text = values.get("price", "")
+        title = values.get("title", "")
+        city, postcode = split_locality(values.get("city") or site.city)
+        photo = values.get("photo")
         listing = Listing(
             site=site.name,
             url=url,
-            title=values.get("title", ""),
+            title=title,
             description=(values.get("description") or card_text)[:MAX_DESCRIPTION_CHARS],
-            city=values.get("city") or site.city,
+            city=city,
             price=parse_number(price_text),
             price_text=price_text,
             currency=site.currency,
             rooms=parse_number(values.get("rooms")),
             area=parse_number(values.get("area")),
-            property_type=values.get("type") or site.property_type,
+            property_type=(values.get("type") or site.property_type
+                           or detect_type(title) or detect_type(card_text)),
+            postcode=postcode,
+            # The site's own label, then the page URL ("/for-rent/"), then the card's words ("€950 / month")
+            deal=(deal_from_label(values.get("deal", "")) or site.deal
+                  or detect_deal(page_url, f"{title} {price_text} {card_text}")),
+            availability=detect_availability(values.get("availability", ""), card_text),
+            photo=_absolute(photo, page_url) if photo and not photo.startswith("data:") else None,
             extra={k: v for k, v in values.items() if k not in _KNOWN_FIELDS and v},
         )
         listings.setdefault(listing.url, listing)   # the same ad shown twice on a page counts once
