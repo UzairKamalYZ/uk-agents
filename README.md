@@ -677,6 +677,16 @@ python -m agents.property.gatherers.pl_housing_data_collector
 
 Reads every CSV in `HOUSING_DATASET_DIR` (default `agents/property/datasets/pl-housing`, resolved from the project root). Streams the CSVs in chunks, converts each row to a text document, embeds it, and saves the vectors to the configured store in batches of 100. With no CSV files there it logs where it looked and stops.
 
+### Crawler (every hour, Playwright)
+
+```bash
+uv run playwright install chromium                 # once per machine
+python -m agents.property.crawler.main             # a pass every CRAWLER_INTERVAL_MINUTES (default 60)
+python -m agents.property.crawler.main --once      # one pass, then exit
+```
+
+Visits each website in `agents/property/crawler/sites.json` in turn with headless Chromium, reads listing cards with per-site CSS selectors, follows the next-page links, and upserts only new or changed listings into the Pinecone index. Full reference: [docs/property-crawler.md](docs/property-crawler.md).
+
 ### From URLs
 
 ```bash

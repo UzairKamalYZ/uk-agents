@@ -27,7 +27,7 @@ def build_context_from_listings(listings: list[dict]) -> str:
             f"""
 Listing {i}
 Location: {safe(l.get("city"))}
-Price: {safe(l.get("price"), " PLN")}
+Price: {safe(l.get("price"), " " + (l.get("currency") or "PLN"))}
 Rooms: {safe(l.get("rooms"))}
 Surface: {safe(l.get("squareMeters"), " m²")}
 Floor: {safe(l.get("floor"))} / {safe(l.get("floorCount"))}
@@ -39,6 +39,7 @@ Amenities: {_format_amenities(l)}
 Description:
 {safe(l.get("text"))}
 """.strip()
+            + (f"\nLink: {l['url']}" if l.get("url") else "")
         )
 
     return "\n\n".join(blocks)

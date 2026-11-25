@@ -1,0 +1,22 @@
+{
+  "sites": [
+    {
+      "name": "example-portal",
+      "enabled": false,
+      "start_urls": ["https://www.example.com/rent/apartments/warsaw?sort=newest"],
+      "listing_selector": "article.listing",
+      "link_selector": "a[href]",
+      "fields": {
+        "title": "h2",
+        "price": ".price",
+        "city": ".location",
+        "rooms": ".rooms",
+        "area": ".area"
+      },
+      "next_page_selector": "a[rel=next]",
+      "max_pages": 3,
+      "currency": "PLN",
+      "property_type": "Apartment"
+    }
+  ]
+}

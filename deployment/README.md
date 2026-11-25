@@ -139,4 +139,4 @@ With systemd, set them in the unit file, for example `Environment=DEPLOY_SERVICE
 - **Changes to `.env` are not picked up automatically** — it is not in git. Restart after editing it (`systemctl --user restart uk-agents`, or Ctrl-C and run the script again).
 - **REST and Telegram each load their own copy of the agents** (embedding model, MCP servers; Telegram also loads Whisper). Allow roughly 2–3 GB of memory for the three services.
 - **The FBR tax agent drives Chrome on the same machine**, so it works only where a desktop Chrome with the Claude extension is available — not on a headless server. The other agents are unaffected.
-- **The WhatsApp listener and mail monitor are not started.** They are separate services (`python -m agents.whatsapp.main`, `python -m agents.mails.main`), not clients; run them alongside if you use them.
+- **The WhatsApp listener, mail monitor and property crawler are not started.** They are separate services (`python -m agents.whatsapp.main`, `python -m agents.mails.main`, `python -m agents.property.crawler.main`), not clients; run them alongside if you use them. The crawler also needs `uv run playwright install chromium` once.

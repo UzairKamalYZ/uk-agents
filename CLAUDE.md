@@ -4,7 +4,7 @@
 
 **uk-agents** is Uzair Kamal's (UK) personal repository of AI agents. There will be many agents serving unrelated purposes (property search, stocks, email, WhatsApp, expenses, tax filing, chat, and more to come). Every agent extends the shared `BaseAgent` in `core/` (Claude LLM, LangGraph pipeline, optional RAG over Pinecone, MCP tools) and is registered in `agents.json`. User-facing clients — REST API, Streamlit web UI, Telegram bot and a scheduled cron job — share the `OrchestratorAgent`, whose router plans which agent(s) handle each request; agents that need to run on their own have standalone entrypoints (`agents/<name>/main.py`). Do not assume a new agent is property-related.
 
-`README.md` is the user-facing guide; `docs/expenditure-tracker.md` and `docs/fbr-tax-filing.md` cover those two agents in depth. `docs/superpowers/` holds dated design notes — historical, not kept up to date.
+`README.md` is the user-facing guide; `docs/expenditure-tracker.md`, `docs/fbr-tax-filing.md` and `docs/property-crawler.md` cover the expense tracker, FBR filing and the property crawler in depth. `docs/superpowers/` holds dated design notes — historical, not kept up to date.
 
 ---
 
@@ -37,6 +37,7 @@ uk-agents/
 ├── agents/
 │   ├── conversational/         # Greetings, small talk; lists the other agents
 │   ├── property/               # RAG property search + ingestion (housing/, gatherers/, scraping/)
+│   │   └── crawler/            # Hourly Playwright crawler → Pinecone (sites.json, main.py)
 │   ├── finance/                # Stocks via the `stocks` MCP server
 │   ├── whatsapp/               # WhatsAppAgent + standalone group listener (main.py, Green API)
 │   ├── mails/                  # MailAgent + standalone IMAP digest monitor (main.py)
@@ -148,6 +149,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `FBR_TAX_MAX_TURNS` | `200` | Tool calls one FBR step may take |
 | `WHATSAPP_*` | — | Green API instance, group id, user name, away message, poll interval |
 | `MAIL_*` | — | IMAP accounts (JSON), check/summary intervals, digest group, `MAIL_SEEN_DB` |
+| `CRAWLER_*` | — | Property crawler: sites file, interval (60 min), seen-listings DB, headless, timeouts, robots.txt, browser path — see `docs/property-crawler.md` |
 | `SBR_WEBDRIVER` | — | Selenium WebDriver URL, read directly by `agents/property/scraping/scrape_se.py` |
 | `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | `false` / — / `uk-agents` | LangSmith tracing |
 
@@ -169,6 +171,7 @@ python -m clients.streamlit.main    # Streamlit UI, port 8501 (start REST first)
 python -m clients.cron.main         # cron job, every 30 min
 python -m agents.whatsapp.main      # WhatsApp group listener (standalone)
 python -m agents.mails.main         # mail digest monitor (standalone)
+python -m agents.property.crawler.main   # property crawler, every hour (standalone; --once for one pass)
 ```
 
 ### Running Tests
@@ -236,4 +239,5 @@ Create `clients/<name>/main.py` (+ `__init__.py`), implement `BaseClient`, call 
 - **The expense tracker is SQLite + in-process tools** (`agents/expenditure/ledger.py`, `tools.py`), not an MCP server — deliberately (see `docs/expenditure-tracker.md`).
 - **Anyone who can message the Telegram bot can use every agent**, including the expense tracker and FBR filing — there is no owner check.
 - **Tests never stub `sys.modules` for project code**: patch the names a test uses (`patch("clients.telegram.main.OrchestratorAgent")`). `core/tests/conftest.py` stubs only heavy third-party ML packages (sentence-transformers, pinecone).
+- **The property crawler needs a browser**: `uv run playwright install chromium` once per machine. Its tests use fake fetchers; the one real-Chromium test skips where no browser is installed.
 - **Pinned dependency**: `av<19` in `pyproject.toml` — faster-whisper 1.2.1 passes `av.open(metadata_errors=…)`, which PyAV 19 removed. Lift it when faster-whisper supports PyAV 19 (`core/tests/speech/test_transcriber.py` decodes a real voice note to catch this).
