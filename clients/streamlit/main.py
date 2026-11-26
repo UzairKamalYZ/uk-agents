@@ -44,6 +44,11 @@ _MOBILE_CSS = """<style>
 [data-testid="stMarkdownContainer"] pre { max-width: 100%; overflow-x: auto; }
 [data-testid="stButton"] button { max-width: 100%; }
 [data-testid="stButton"] button p { white-space: normal; overflow-wrap: anywhere; }
+/* iOS Safari zooms into any text field under 16px when it is tapped, pushing the
+   send button off screen — keep text fields at 16px on touch screens. */
+@media (pointer: coarse) {
+  [data-testid="stChatInputTextArea"], input, textarea { font-size: 16px !important; }
+}
 @media (max-width: 640px) {
   [data-testid="stMainBlockContainer"], [data-testid="stBottomBlockContainer"] {
     padding-left: 1rem; padding-right: 1rem;
