@@ -47,12 +47,13 @@ class CrawlerService:
         ))
         self._stop_requested = False
 
-    def run_once(self) -> CrawlReport:
+    def run_once(self, trigger: str = "once") -> CrawlReport:
+        """One pass now. trigger (recorded in the crawl history): schedule | once | request."""
         with SeenStore(self.settings.db_file) as store:
             # Recorded first, so a pass that fails still counts: the next one waits for its turn
             started = self._clock()
             store.record_pass(started)
-            run_id = store.start_run(started)
+            run_id = store.start_run(started, trigger)
             try:
                 report = self._crawl(store)
             except Exception as exc:
@@ -87,16 +88,39 @@ class CrawlerService:
             due = self.schedule.next_run(self._clock(), last_pass)
             if due > self._clock():
                 logger.info("[crawler] next pass at %s UTC", f"{due:%Y-%m-%d %H:%M}")
-            # Sleep in 1-second ticks so stop() can interrupt promptly; compare with the clock,
-            # so a suspended machine still runs the pass as soon as it wakes up.
+            # Sleep in 1-second ticks so stop() and a "run now" request are noticed promptly; compare
+            # with the clock, so a suspended machine still runs the pass as soon as it wakes up.
+            trigger = "schedule"
             while not self._stop_requested and self._clock() < due:
+                if self._take_request(last_pass):
+                    trigger = "request"
+                    break
                 self._sleep(1)
             if self._stop_requested:
                 break
             try:
-                self.run_once()
+                self.run_once(trigger)
             except Exception:
                 logger.exception("[crawler] pass failed")
+
+    def _take_request(self, last_pass: datetime | None) -> bool:
+        """A "run now" request (the request file, written by my-stats): consume it, and say whether
+        to start a pass — not if the last pass started less than request_cooldown_minutes ago."""
+        path = self.settings.run_request_file
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            logger.exception("[crawler] could not remove the run request %s — ignored", path)
+            return False
+        cooldown = timedelta(minutes=self.settings.request_cooldown_minutes)
+        if last_pass is not None and self._clock() - last_pass < cooldown:
+            logger.info("[crawler] run request ignored — the last pass started at %s UTC, less than %d min ago",
+                        f"{last_pass:%H:%M}", self.settings.request_cooldown_minutes)
+            return False
+        logger.info("[crawler] run requested — starting a pass now")
+        return True
 
     def stop(self) -> None:
         self._stop_requested = True
@@ -113,7 +137,7 @@ def main(argv: list[str] | None = None) -> None:
         logger.error("[crawler] configuration error: %s", exc)
         raise SystemExit(1)
     if args.once:
-        service.run_once()
+        service.run_once("once")
     else:
         run_service(service, "crawler")
 
