@@ -668,15 +668,15 @@ Pass the returned `session_id` on the next call to continue the conversation; wi
 
 ## Data Ingestion
 
-### Crawler (every hour, Playwright)
+### Crawler (twice a day, Playwright)
 
 ```bash
 uv run playwright install chromium                 # once per machine
-python -m property_crawler.main             # a pass every CRAWLER_INTERVAL_MINUTES (default 60)
+python -m property_crawler.main             # passes at CRAWLER_RUN_AT (default 04:30 and 13:00, Europe/Brussels)
 python -m property_crawler.main --once      # one pass, then exit
 ```
 
-`property_crawler/` is a separate, self-contained package (it imports nothing from uk-agents and is meant to become its own repository). It visits each website in `property_crawler/sites.json` in turn with headless Chromium, reads listing cards with per-site CSS selectors, follows the next-page links, and upserts only new or changed listings into the Pinecone index the property agent searches. On a server, `deployment/deploy.sh` runs it as one of its services. Full reference: [property_crawler/README.md](property_crawler/README.md).
+`property_crawler/` is a separate, self-contained package (it imports nothing from uk-agents and is meant to become its own repository). It visits each website in `property_crawler/sites.json` in turn with headless Chromium, reads listing cards with per-site CSS selectors, follows the next-page links, and upserts only new or changed listings into the Pinecone index the property agent searches. The same property found on several sites is stored once. On a server, `deployment/deploy.sh` runs it as one of its services. Full reference: [property_crawler/README.md](property_crawler/README.md).
 
 ### From URLs
 

@@ -163,8 +163,8 @@ class PropertyCrawler:
             if not listings:
                 logger.warning("[crawler] %s: no listings matched %r on %s — check the selectors",
                                site.name, site.listing_selector, url)
-            fresh = self._index(listings)
-            result.indexed += len(fresh)
+            fresh, indexed = self._index(listings)
+            result.indexed += indexed
             if site.stop_when_seen and listings and not fresh:
                 logger.info("[crawler] %s: nothing new on %s — not paging further", site.name, url)
                 return
@@ -176,11 +176,24 @@ class PropertyCrawler:
             self._sleep(self._jitter(self._delay))
         self._loads += 1
 
-    def _index(self, listings: list[Listing]) -> list[Listing]:
+    def _index(self, listings: list[Listing]) -> tuple[list[Listing], int]:
+        """New or changed listings, and how many of them were embedded. The same property already
+        stored from another site (same fingerprint) is recorded as its duplicate, not embedded again."""
         fresh = self._store.unseen(listings)
+        duplicate_of = {}
+        for listing in fresh:
+            original = self._store.original_of(listing)
+            if original:
+                duplicate_of[listing.id] = original
+        originals = [l for l in fresh if l.id not in duplicate_of]
+        if originals:
+            self._indexer.index(originals)
         if fresh:
-            self._indexer.index(fresh)
-            self._store.touch(fresh)   # only after the upsert succeeded, so a failure is retried next pass
+            # Only after the upsert succeeded, so a failure is retried next pass
+            self._store.touch(fresh, duplicate_of=duplicate_of)
+        if duplicate_of:
+            logger.info("[crawler] %d listing(s) already found on another site — not indexed again",
+                        len(duplicate_of))
         fresh_ids = {l.id for l in fresh}
         self._store.seen_again([l for l in listings if l.id not in fresh_ids])
-        return fresh
+        return fresh, len(originals)

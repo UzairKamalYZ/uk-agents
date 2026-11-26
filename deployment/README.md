@@ -9,7 +9,7 @@ It starts four services:
 | REST API | `uv run python -m clients.rest.main` | `http://<host>:8000` |
 | Telegram bot | `uv run python -m clients.telegram.main` | your bot, in Telegram |
 | Streamlit UI | `uv run python -m clients.streamlit.main` | `http://<host>:8501` |
-| Property crawler | `uv run python -m property_crawler.main` | — (fills Pinecone every hour; see [property_crawler/README.md](../property_crawler/README.md)) |
+| Property crawler | `uv run python -m property_crawler.main` | — (fills Pinecone at 04:30 and 13:00 Brussels time; see [property_crawler/README.md](../property_crawler/README.md)) |
 
 Then, every minute, it:
 

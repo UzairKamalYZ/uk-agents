@@ -40,7 +40,9 @@ def _bool(name: str, default: str) -> bool:
 class Settings:
     sites_file: Path
     db_file: Path
-    interval_minutes: int = 60
+    interval_minutes: int = 60          # used when run_at is empty
+    run_at: str = "04:30,13:00"         # fixed pass times, comma-separated HH:MM in `timezone`
+    timezone: str = "Europe/Brussels"
     headless: bool = True
     timeout_seconds: float = 30
     page_delay_seconds: float = 8
@@ -59,6 +61,9 @@ class Settings:
             sites_file=_path("CRAWLER_SITES_FILE", PACKAGE_DIR / "sites.json"),
             db_file=_path("CRAWLER_DB_FILE", _user_data_dir() / "seen.db"),
             interval_minutes=int(os.getenv("CRAWLER_INTERVAL_MINUTES") or 60),
+            # Unset → twice a day; set but empty → every CRAWLER_INTERVAL_MINUTES instead
+            run_at=os.environ.get("CRAWLER_RUN_AT", "04:30,13:00"),
+            timezone=os.getenv("CRAWLER_TIMEZONE") or "Europe/Brussels",
             headless=_bool("CRAWLER_HEADLESS", "true"),
             timeout_seconds=float(os.getenv("CRAWLER_TIMEOUT_SECONDS") or 30),
             page_delay_seconds=float(os.getenv("CRAWLER_PAGE_DELAY_SECONDS") or 8),

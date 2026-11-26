@@ -148,7 +148,7 @@ All settings live in `.env` at the **project root**; `core/src/config/config.py`
 | `FBR_TAX_MAX_TURNS` | `200` | Tool calls one FBR step may take |
 | `WHATSAPP_*` | — | Green API instance, group id, user name, away message, poll interval |
 | `MAIL_*` | — | IMAP accounts (JSON), check/summary intervals, digest group, `MAIL_SEEN_DB` |
-| `CRAWLER_*` | — | Property crawler: sites file, interval (60 min), seen-listings DB, headless, timeouts, page delay (8–16 s), back-off after a block (60 min, doubling to 24 h), robots.txt, browser path — read by `property_crawler/settings.py`, not `Config`; see `property_crawler/README.md` |
+| `CRAWLER_*` | — | Property crawler: sites file, pass times (`CRAWLER_RUN_AT` 04:30,13:00 in `CRAWLER_TIMEZONE` Europe/Brussels; empty → every `CRAWLER_INTERVAL_MINUTES`), seen-listings DB, headless, timeouts, page delay (8–16 s), back-off after a block (60 min, doubling to 24 h), robots.txt, browser path — read by `property_crawler/settings.py`, not `Config`; see `property_crawler/README.md` |
 | `SBR_WEBDRIVER` | — | Selenium WebDriver URL, read directly by `agents/property/scraping/scrape_se.py` |
 | `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | `false` / — / `uk-agents` | LangSmith tracing |
 
@@ -170,7 +170,7 @@ python -m clients.streamlit.main    # Streamlit UI, port 8501 (start REST first)
 python -m clients.cron.main         # cron job, every 30 min
 python -m agents.whatsapp.main      # WhatsApp group listener (standalone)
 python -m agents.mails.main         # mail digest monitor (standalone)
-python -m property_crawler.main     # property crawler, every hour (separate package; --once for one pass)
+python -m property_crawler.main     # property crawler, 04:30 + 13:00 Brussels time (separate package; --once for one pass now)
 ```
 
 ### Running Tests

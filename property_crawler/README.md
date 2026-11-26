@@ -1,6 +1,6 @@
 # Property listing crawler
 
-`property_crawler` keeps a Pinecone index of property listings fresh. Every hour it visits the websites in `sites.json` one at a time. It renders each listing page in headless Chromium (Playwright) so JavaScript-built pages work, reads the listing cards with CSS selectors, and upserts every **new or changed** listing into the index. uk-agents' property agent searches that index.
+`property_crawler` keeps a Pinecone index of property listings fresh. Twice a day (04:30 and 13:00, Brussels time) it visits the websites in `sites.json` one at a time. It renders each listing page in headless Chromium (Playwright) so JavaScript-built pages work, reads the listing cards with CSS selectors, and upserts every **new or changed** listing into the index. uk-agents' property agent searches that index.
 
 It is a self-contained package that imports nothing from uk-agents (a test enforces this), so it can move to its own repository unchanged. See [Moving to its own repository](#moving-to-its-own-repository). It shares only an interface with uk-agents: the Pinecone index, the embedding model and the metadata keys.
 
@@ -8,8 +8,8 @@ It runs on the Ubuntu server as one of the services of `deployment/deploy.sh` (s
 
 ```bash
 uv run playwright install chromium                 # the browser (deploy.sh does this on every build)
-python -m property_crawler.main             # a pass now, then every CRAWLER_INTERVAL_MINUTES
-python -m property_crawler.main --once      # one pass, then exit
+python -m property_crawler.main             # passes at CRAWLER_RUN_AT (04:30 and 13:00 by default)
+python -m property_crawler.main --once      # one pass now, then exit
 ```
 
 ## One pass
@@ -91,9 +91,10 @@ The crawler never tries to get *past* a block. It doesn't solve CAPTCHAs, fake a
 | `city`, `property_type` | none | Used when the card doesn't name one |
 | `currency` | none | Shown with the price, e.g. `EUR` |
 | `deal` | detected | `rent` or `sale` when every listing on the site is one (`buy`/`sell` are accepted too). Left out, it is detected per listing (see below) |
-| `enabled` | `true` | `false` keeps the entry without crawling it |
+| `enabled` | `true` | `false` keeps the entry without crawling it; a switched-off entry may lack its selectors |
+| `todo` | none | A note on what is missing before the site can be switched on (ignored by the crawler) |
 
-The shipped `sites.json` crawls Immoweb (see below) and holds one disabled example. To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
+The shipped `sites.json` crawls Immoweb (see below) and holds one disabled example, plus 53 more Belgian portals, agencies, classifieds and student-housing sites, switched off with a `todo`: each needs its newest-first search page in `start_urls`, its card selectors, and `"enabled": true`. To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
 
 ## What the crawler works out for each listing
 
@@ -125,8 +126,22 @@ So one site can be crawled for rent *and* sale: give it one start URL of each (I
 | `updated_at` | When its details last changed (e.g. a price drop) |
 | `last_seen` | The last pass whose pages showed it. The crawler reads only the newest pages, so an old `last_seen` means "dropped out of the newest results", not necessarily "gone" |
 | `content_hash` | Changes when anything indexed changes |
+| `fingerprint` | The property, whichever site lists it (see [Duplicates](#duplicates)) |
+| `duplicate_of` | The `id` of the same property found first on another site, or empty. Apps listing properties should leave these rows out |
 
 A `seen.db` from before these columns existed gets them added on the next start; its old rows keep empty details until the listing is seen again.
+
+## When it runs
+
+At `CRAWLER_RUN_AT`: by default 04:30, after the night's new listings are up, and 13:00. The start of each pass is kept in `CRAWLER_DB_FILE`, so the crawler knows what it missed: when it starts (first run, a reboot, a deploy) and the last scheduled pass didn't happen, it runs one straight away, then goes back to the schedule. A deploy in between two passes doesn't trigger an extra one. `--once` runs a pass now, whatever the time.
+
+## Duplicates
+
+The same property is often listed by its agency, by one or more portals and by aggregators. Three checks keep it out of the index twice:
+
+- **Same ad, same URL** — the vector id comes from the listing's URL, so seeing it again updates it.
+- **Same ad, different URL** — tracking parameters (`utm_*`, `fbclid`, `gclid`, `ref`, `searchId` …) are removed from listing links before they become the id.
+- **Same property, another site** — each listing gets a fingerprint: rent/sale, postcode (or city), price, m², bedrooms and type. When another site already has a listing with the same fingerprint, the new one is stored in `seen.db` with `duplicate_of` pointing at the first, and is **not** embedded. A listing needs a price, a place and m² or bedrooms to get a fingerprint; with less, it is always kept. Identical listings on the *same* site (flats in a new-build project) are kept apart.
 
 ## What lands in Pinecone
 
@@ -162,7 +177,9 @@ It deletes from `PINECONE_INDEX_NAME`, in the default namespace, and can't be un
 | Variable | Default | Meaning |
 |---|---|---|
 | `CRAWLER_SITES_FILE` | `property_crawler/sites.json` | Site list |
-| `CRAWLER_INTERVAL_MINUTES` | `60` | Minutes between the end of one pass and the start of the next |
+| `CRAWLER_RUN_AT` | `04:30,13:00` | When passes start: times of day (`HH:MM`, comma-separated) in `CRAWLER_TIMEZONE`. Empty → every `CRAWLER_INTERVAL_MINUTES` instead |
+| `CRAWLER_TIMEZONE` | `Europe/Brussels` | Time zone of `CRAWLER_RUN_AT` (summer time is handled) |
+| `CRAWLER_INTERVAL_MINUTES` | `60` | Only with an empty `CRAWLER_RUN_AT`: minutes between the start of one pass and the next |
 | `CRAWLER_DB_FILE` | per-user data dir `/property-crawler/seen.db` (Linux: `~/.local/share/property-crawler/seen.db`) | Which listings are already indexed (delete it to re-index everything) |
 | `CRAWLER_HEADLESS` | `true` | `false` shows the browser window (debugging selectors) |
 | `CRAWLER_TIMEOUT_SECONDS` | `30` | Page load / `wait_for` timeout |
