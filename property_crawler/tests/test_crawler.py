@@ -747,6 +747,51 @@ def test_service_runs_a_pass_with_the_configured_files(tmp_path):
     assert SeenStore(tmp_path / "seen.db").count() == 4
 
 
+def test_each_pass_is_recorded_with_per_site_counts(tmp_path):
+    sites = tmp_path / "sites.json"
+    sites.write_text(json.dumps({"sites": [{
+        "name": "portal", "start_urls": [BASE + "1"], "listing_selector": "article.offer",
+        "fields": {"title": "h2"}, "next_page_selector": "a.next", "max_pages": 3}]}))
+    times = iter([_utc("2026-11-26T12:00:00"), _utc("2026-11-26T12:03:00"),
+                  _utc("2026-11-26T13:00:00"), _utc("2026-11-26T13:01:00")])
+    service = CrawlerService(_settings(tmp_path, sites), indexer=FakeIndexer(),
+                             fetcher_factory=lambda: FakeFetcher(_three_pages()), clock=lambda: next(times))
+    service.run_once()
+    service.run_once()                       # nothing new the second time
+    with SeenStore(tmp_path / "seen.db") as store:
+        second, first = store.runs()
+    assert (first["started_at"], first["finished_at"], first["status"]) == (
+        "2026-11-26T12:00:00+00:00", "2026-11-26T12:03:00+00:00", "ok")
+    assert first["sites"] == [{"site": "portal", "status": "ok", "pages": 3, "found": 4, "new": 4,
+                               "indexed": 4, "detail": None}]
+    assert second["sites"][0]["found"] == 2 and second["sites"][0]["new"] == 0   # stopped at known ones
+
+
+def test_a_failed_pass_is_recorded_as_failed(tmp_path):
+    service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
+                             fetcher_factory=MagicMock(), clock=lambda: _utc("2026-11-26T12:00:00"))
+    with patch("property_crawler.main.load_sites", side_effect=OSError("disk gone")):
+        with pytest.raises(OSError):
+            service.run_once()
+    with SeenStore(tmp_path / "seen.db") as store:
+        [run] = store.runs()
+    assert (run["status"], run["error"], run["sites"]) == ("failed", "OSError: disk gone", [])
+
+
+def test_blocked_and_skipped_sites_are_recorded_with_the_reason(tmp_path):
+    store = SeenStore(tmp_path / "seen.db")
+    pages = {BASE + "1": CLOUDFLARE}
+    crawler = PropertyCrawler([_site()], FakeFetcher(pages), store, FakeIndexer(), page_delay_seconds=0,
+                              sleep=lambda s: None)
+    run = store.start_run(_utc("2026-11-26T12:00:00"))
+    store.finish_run(run, _utc("2026-11-26T12:01:00"), "ok", crawler.run_once().sites)
+    run = store.start_run(_utc("2026-11-26T12:30:00"))
+    store.finish_run(run, _utc("2026-11-26T12:30:00"), "ok", crawler.run_once().sites)
+    skipped, blocked = (r["sites"][0] for r in store.runs())
+    assert blocked["status"] == "blocked" and blocked["detail"]
+    assert skipped["status"] == "skipped" and "backing off" in skipped["detail"]
+
+
 def test_service_stop_ends_start(tmp_path):
     service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
                              fetcher_factory=MagicMock())
@@ -854,15 +899,15 @@ def test_the_same_property_on_another_site_is_stored_once(tmp_path):
     crawler = _crawler(tmp_path, [], FakeFetcher({}), indexer)
     store = crawler._store
     crawler._index([_flat("agency", 1)])
-    fresh, indexed = crawler._index([_flat("portal", 7), _flat("portal", 8, price=1200)])
-    assert (len(fresh), indexed) == (2, 1)                    # flat 7 is the agency's flat 1
+    fresh, new, indexed = crawler._index([_flat("portal", 7), _flat("portal", 8, price=1200)])
+    assert (len(fresh), new, indexed) == (2, 2, 1)                   # flat 7 is the agency's flat 1
     assert [l.url for l in indexer.indexed] == ["https://agency.example/1", "https://portal.example/8"]
     conn = sqlite3.connect(tmp_path / "seen.db")
     rows = dict(conn.execute("SELECT url, duplicate_of FROM listings").fetchall())
     assert rows["https://portal.example/7"] == _flat("agency", 1).id
     assert rows["https://agency.example/1"] is None and rows["https://portal.example/8"] is None
     # Seen again unchanged: still a duplicate, still not indexed
-    assert crawler._index([_flat("portal", 7)]) == ([], 0)
+    assert crawler._index([_flat("portal", 7)]) == ([], 0, 0)
     assert store.count() == 3
 
 

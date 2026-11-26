@@ -45,6 +45,30 @@ class SeenStore:
         )
         # Bookkeeping, e.g. when the last pass started (so a missed scheduled pass is caught up)
         self._conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        # Crawl history: one row per pass, and one per site in it (read by my-stats' Crawler page)
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS crawl_runs (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   started_at TEXT NOT NULL,
+                   finished_at TEXT,
+                   status TEXT NOT NULL,
+                   error TEXT
+               )"""
+        )
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS crawl_run_sites (
+                   run_id INTEGER NOT NULL REFERENCES crawl_runs (id),
+                   site TEXT NOT NULL,
+                   status TEXT NOT NULL,
+                   pages INTEGER NOT NULL,
+                   found INTEGER NOT NULL,
+                   new INTEGER NOT NULL,
+                   indexed INTEGER NOT NULL,
+                   detail TEXT,
+                   PRIMARY KEY (run_id, site)
+               )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS crawl_runs_started ON crawl_runs (started_at)")
         self._migrate()
         self._conn.commit()
 
@@ -79,6 +103,40 @@ class SeenStore:
                            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                            (started.isoformat(timespec="seconds"),))
         self._conn.commit()
+
+    # --- crawl history ---------------------------------------------------------
+
+    def start_run(self, started: datetime) -> int:
+        """A pass begins: status 'running' until finish_run (a pass whose process died stays 'running')."""
+        cur = self._conn.execute("INSERT INTO crawl_runs (started_at, status) VALUES (?, 'running')",
+                                 (started.isoformat(timespec="seconds"),))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def finish_run(self, run_id: int, finished: datetime, status: str, sites=(), error: str | None = None) -> None:
+        """status: ok | stopped | failed. sites: the pass's SiteResult objects."""
+        self._conn.execute("UPDATE crawl_runs SET finished_at = ?, status = ?, error = ? WHERE id = ?",
+                           (finished.isoformat(timespec="seconds"), status, error, run_id))
+        self._conn.executemany(
+            """INSERT OR REPLACE INTO crawl_run_sites (run_id, site, status, pages, found, new, indexed, detail)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(run_id, r.site, r.status, r.pages, r.found, r.new, r.indexed, r.detail) for r in sites],
+        )
+        self._conn.commit()
+
+    def runs(self, limit: int = 50) -> list[dict]:
+        """The newest passes first, each with its per-site rows."""
+        self._conn.row_factory = sqlite3.Row
+        try:
+            runs = [dict(r) for r in self._conn.execute(
+                "SELECT * FROM crawl_runs ORDER BY id DESC LIMIT ?", (limit,))]
+            for run in runs:
+                run["sites"] = [dict(r) for r in self._conn.execute(
+                    "SELECT site, status, pages, found, new, indexed, detail FROM crawl_run_sites "
+                    "WHERE run_id = ? ORDER BY site", (run["id"],))]
+        finally:
+            self._conn.row_factory = None
+        return runs
 
     # --- back-off ------------------------------------------------------------
 
@@ -125,6 +183,16 @@ class SeenStore:
             if row is None or row[0] != listing.content_hash():
                 fresh.append(listing)
         return fresh
+
+    def known_ids(self, ids: list[str]) -> set[str]:
+        """Which of these listing ids are already stored."""
+        known: set[str] = set()
+        ids = list(ids)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            known.update(r[0] for r in self._conn.execute(f"SELECT id FROM listings WHERE id IN ({marks})", chunk))
+        return known
 
     def original_of(self, listing: Listing) -> str | None:
         """The id of the same property already stored from another site, or None if this one is the first."""

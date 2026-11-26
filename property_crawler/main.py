@@ -48,24 +48,35 @@ class CrawlerService:
         self._stop_requested = False
 
     def run_once(self) -> CrawlReport:
-        s = self.settings
-        with SeenStore(s.db_file) as store:
+        with SeenStore(self.settings.db_file) as store:
             # Recorded first, so a pass that fails still counts: the next one waits for its turn
-            store.record_pass(self._clock())
-            # Re-read the site list every pass, so edits to sites.json need no restart.
-            sites = load_sites(s.sites_file)
-            crawler = PropertyCrawler(
-                sites=sites,
-                fetcher=self._fetcher_factory(),
-                store=store,
-                indexer=self._indexer,
-                robots=RobotsChecker() if s.respect_robots else None,
-                page_delay_seconds=s.page_delay_seconds,
-                back_off=timedelta(minutes=s.back_off_minutes),
-                max_back_off=timedelta(hours=s.max_back_off_hours),
-                should_stop=lambda: self._stop_requested,
-            )
-            return crawler.run_once()
+            started = self._clock()
+            store.record_pass(started)
+            run_id = store.start_run(started)
+            try:
+                report = self._crawl(store)
+            except Exception as exc:
+                store.finish_run(run_id, self._clock(), "failed", error=f"{type(exc).__name__}: {exc}")
+                raise
+            store.finish_run(run_id, self._clock(), "stopped" if self._stop_requested else "ok", report.sites)
+            return report
+
+    def _crawl(self, store: SeenStore) -> CrawlReport:
+        s = self.settings
+        # Re-read the site list every pass, so edits to sites.json need no restart.
+        sites = load_sites(s.sites_file)
+        crawler = PropertyCrawler(
+            sites=sites,
+            fetcher=self._fetcher_factory(),
+            store=store,
+            indexer=self._indexer,
+            robots=RobotsChecker() if s.respect_robots else None,
+            page_delay_seconds=s.page_delay_seconds,
+            back_off=timedelta(minutes=s.back_off_minutes),
+            max_back_off=timedelta(hours=s.max_back_off_hours),
+            should_stop=lambda: self._stop_requested,
+        )
+        return crawler.run_once()
 
     def start(self) -> None:
         self._stop_requested = False

@@ -131,6 +131,31 @@ So one site can be crawled for rent *and* sale: give it one start URL of each (I
 
 A `seen.db` from before these columns existed gets them added on the next start; its old rows keep empty details until the listing is seen again.
 
+## Crawl history
+
+Every pass is logged in `seen.db`, and **my-stats' Crawler page reads it read-only** — same contract as the listings table: add columns freely, don't rename or drop them.
+
+`crawl_runs` — one row per pass:
+
+| Column | Meaning |
+|---|---|
+| `id` | Pass number |
+| `started_at`, `finished_at` | ISO 8601, UTC. `finished_at` is empty while the pass runs (or if its process died) |
+| `status` | `running`, `ok`, `stopped` (shut down mid-pass) or `failed` |
+| `error` | Why a `failed` pass failed |
+
+`crawl_run_sites` — one row per site in a pass:
+
+| Column | Meaning |
+|---|---|
+| `run_id`, `site` | The pass, and the site's name from `sites.json` |
+| `status` | `ok`, `blocked` (refused us this pass), `skipped` (still backing off) or `error` |
+| `pages` | Result pages loaded |
+| `found` | Listings read from those pages |
+| `new` | Of those, listings never stored before |
+| `indexed` | New or changed listings embedded into Pinecone (duplicates of another site's listing are not) |
+| `detail` | The block reason, back-off or error text |
+
 ## When it runs
 
 At `CRAWLER_RUN_AT`: by default 04:30, after the night's new listings are up, and 13:00. The start of each pass is kept in `CRAWLER_DB_FILE`, so the crawler knows what it missed: when it starts (first run, a reboot, a deploy) and the last scheduled pass didn't happen, it runs one straight away, then goes back to the schedule. A deploy in between two passes doesn't trigger an extra one. `--once` runs a pass now, whatever the time.
