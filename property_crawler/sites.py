@@ -90,11 +90,12 @@ def load_sites(path: str | Path) -> list[Site]:
     raw_sites = json.loads(path.read_text(encoding="utf-8")).get("sites", [])
     sites = []
     for i, raw in enumerate(raw_sites):
+        if isinstance(raw, dict) and not raw.get("enabled", True):
+            continue   # switched off: may still lack its selectors
         try:
             site = _site(raw)
         except (KeyError, TypeError, ValueError) as exc:
             logger.error("[crawler] site #%d in %s skipped: %s", i + 1, path, exc)
             continue
-        if site.enabled:
-            sites.append(site)
+        sites.append(site)
     return sites

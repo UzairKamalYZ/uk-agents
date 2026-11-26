@@ -16,6 +16,7 @@ from property_crawler.extractor import Listing, extract_listings, next_page_url,
 from property_crawler.fetcher import FetchedPage, PlaywrightFetcher, RobotsChecker
 from property_crawler.indexer import ListingIndexer
 from property_crawler.main import CrawlerService
+from property_crawler.schedule import Schedule, parse_times
 from property_crawler.purge import purge
 from property_crawler.settings import PACKAGE_DIR, ROOT, Settings
 from property_crawler.vector_index import IncompatibleIndexError, VectorIndex, check_compatible
@@ -695,6 +696,12 @@ def test_settings_defaults(monkeypatch, tmp_path):
     assert s.db_file == tmp_path / "property-crawler" / "seen.db"
     assert (s.interval_minutes, s.page_delay_seconds, s.back_off_minutes, s.max_back_off_hours) == (60, 8, 60, 24)
     assert s.headless and s.respect_robots
+    assert (s.run_at, s.timezone) == ("04:30,13:00", "Europe/Brussels")
+
+
+def test_an_empty_run_at_means_every_interval(monkeypatch):
+    monkeypatch.setenv("CRAWLER_RUN_AT", "")
+    assert Settings.from_env().run_at == ""
 
 
 def test_settings_resolve_relative_paths_from_the_repository_root(monkeypatch):
@@ -748,6 +755,137 @@ def test_service_stop_ends_start(tmp_path):
     service.run_once.assert_called_once()
 
 
+# --- schedule ---------------------------------------------------------------
+
+BRUSSELS = Schedule(tuple(parse_times("13:00, 04:30")), "Europe/Brussels")
+
+
+def _utc(text: str) -> datetime:
+    return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+
+
+def test_parse_times_sorts_and_rejects_bad_times():
+    assert [t.strftime("%H:%M") for t in parse_times("13:00, 4:30,13:00")] == ["04:30", "13:00"]
+    assert parse_times("") == []
+    with pytest.raises(ValueError):
+        parse_times("25:00")
+
+
+def test_unknown_time_zone_is_a_configuration_error():
+    with pytest.raises(ValueError, match="CRAWLER_TIMEZONE"):
+        Schedule((), "Mars/Olympus")
+
+
+@pytest.mark.parametrize("now, last_pass, expected", [
+    # Brussels is UTC+1 in winter: 04:30 local = 03:30 UTC, 13:00 local = 12:00 UTC
+    ("2026-11-26T05:00:00", "2026-11-26T03:30:00", "2026-11-26T12:00:00"),   # morning pass done → 13:00
+    ("2026-11-26T13:00:00", "2026-11-26T12:00:00", "2026-11-27T03:30:00"),   # both done → tomorrow 04:30
+    ("2026-11-26T02:00:00", "2026-11-25T12:00:00", "2026-11-26T03:30:00"),   # night → 04:30
+    ("2026-11-26T10:00:00", "2026-11-25T12:00:00", "2026-11-26T10:00:00"),   # 04:30 missed (restart) → now
+    ("2026-06-26T05:00:00", "2026-06-26T02:30:00", "2026-06-26T11:00:00"),   # summer time: UTC+2
+])
+def test_fixed_times_run_after_4_30_and_at_13_00_brussels_time(now, last_pass, expected):
+    assert BRUSSELS.next_run(_utc(now), _utc(last_pass)) == _utc(expected)
+
+
+def test_a_first_start_runs_a_pass_now():
+    assert BRUSSELS.next_run(_utc("2026-11-26T10:00:00"), None) == _utc("2026-11-26T10:00:00")
+
+
+def test_interval_schedule():
+    every_hour = Schedule((), "UTC", 60)
+    assert every_hour.next_run(_utc("2026-11-26T10:00:00"), _utc("2026-11-26T09:30:00")) == _utc("2026-11-26T10:30:00")
+    assert every_hour.describe() == "a pass every 60 minutes"
+    assert BRUSSELS.describe() == "passes at 04:30, 13:00 (Europe/Brussels)"
+
+
+def test_service_waits_for_the_next_scheduled_time(tmp_path):
+    clock = {"now": _utc("2026-11-26T05:00:00")}
+    with SeenStore(tmp_path / "seen.db") as store:
+        store.record_pass(_utc("2026-11-26T03:30:00"))      # this morning's pass is done
+    slept = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += timedelta(minutes=30)
+
+    service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
+                             fetcher_factory=MagicMock(), clock=lambda: clock["now"], sleep=sleep)
+    passes = []
+    service.run_once = MagicMock(side_effect=lambda: (passes.append(clock["now"]), service.stop()))
+    service.start()
+    assert passes == [_utc("2026-11-26T12:00:00")]           # 13:00 Brussels
+    assert len(slept) == 14
+
+
+def test_run_once_records_the_pass(tmp_path):
+    service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
+                             fetcher_factory=MagicMock(), clock=lambda: _utc("2026-11-26T12:00:00"))
+    service.run_once()
+    with SeenStore(tmp_path / "seen.db") as store:
+        assert store.last_pass() == _utc("2026-11-26T12:00:00")
+
+
+# --- duplicates -------------------------------------------------------------
+
+def test_tracking_parameters_do_not_make_a_new_listing():
+    cards = ['<article class="offer"><a href="/offer/1?utm_source=x&fbclid=y&id=7"><h2>A</h2></a></article>',
+             '<article class="offer"><a href="/offer/1?id=7"><h2>A</h2></a></article>']
+    [listing] = extract_listings(_page(cards), _site(fields={"title": FieldSelector("h2")}), "https://portal.example/")
+    assert listing.url == "https://portal.example/offer/1?id=7"
+
+
+def test_fingerprint_needs_price_place_and_size():
+    flat = Listing(site="a", url="u", price=950, postcode="9000", area=60.4, rooms=2, deal="rent",
+                   property_type="Apartment")
+    assert flat.fingerprint == "rent|9000|950|60|2|apartment"
+    assert Listing(site="b", url="v", price=950.0, city="Gent", area=60, deal="rent").fingerprint == "rent|gent|950|60|?|?"
+    assert Listing(site="a", url="u", price=950, postcode="9000").fingerprint is None      # no size
+    assert Listing(site="a", url="u", area=60, postcode="9000").fingerprint is None        # no price
+
+
+def _flat(site: str, n: int, price: float = 950, area: float = 60) -> Listing:
+    return Listing(site=site, url=f"https://{site}.example/{n}", title=f"Flat {n}", price=price, postcode="9000",
+                   area=area, rooms=2, deal="rent", property_type="Apartment")
+
+
+def test_the_same_property_on_another_site_is_stored_once(tmp_path):
+    indexer = FakeIndexer()
+    crawler = _crawler(tmp_path, [], FakeFetcher({}), indexer)
+    store = crawler._store
+    crawler._index([_flat("agency", 1)])
+    fresh, indexed = crawler._index([_flat("portal", 7), _flat("portal", 8, price=1200)])
+    assert (len(fresh), indexed) == (2, 1)                    # flat 7 is the agency's flat 1
+    assert [l.url for l in indexer.indexed] == ["https://agency.example/1", "https://portal.example/8"]
+    conn = sqlite3.connect(tmp_path / "seen.db")
+    rows = dict(conn.execute("SELECT url, duplicate_of FROM listings").fetchall())
+    assert rows["https://portal.example/7"] == _flat("agency", 1).id
+    assert rows["https://agency.example/1"] is None and rows["https://portal.example/8"] is None
+    # Seen again unchanged: still a duplicate, still not indexed
+    assert crawler._index([_flat("portal", 7)]) == ([], 0)
+    assert store.count() == 3
+
+
+def test_identical_flats_on_one_site_are_kept_apart(tmp_path):
+    # A new-build project lists several identical flats: same site, different ads → all kept
+    indexer = FakeIndexer()
+    crawler = _crawler(tmp_path, [], FakeFetcher({}), indexer)
+    crawler._index([_flat("agency", 1), _flat("agency", 2)])
+    assert len(indexer.indexed) == 2
+
+
+def test_a_seen_db_without_dedup_columns_gets_them(tmp_path):
+    db = tmp_path / "seen.db"
+    with SeenStore(db) as store:
+        store.touch([_flat("agency", 1)])
+    conn = sqlite3.connect(db)
+    conn.execute("ALTER TABLE listings DROP COLUMN duplicate_of")
+    conn.commit()
+    conn.close()
+    with SeenStore(db) as store:
+        assert store.original_of(_flat("portal", 9)) == _flat("agency", 1).id
+
+
 def test_a_site_without_a_currency_shows_the_bare_price():
     [listing] = extract_listings(_page([_card(1)]), _site(currency=None), "https://portal.example/")
     assert "Price 3500." in listing.text and "currency" not in listing.metadata("now")
@@ -775,3 +913,17 @@ def test_playwright_fetcher_returns_javascript_rendered_html(tmp_path):
         fetcher.close()
     [listing] = extract_listings(fetched.html, _site(), page.as_uri())
     assert listing.title == "Rendered"
+
+
+def test_a_switched_off_site_needs_no_selectors(tmp_path, caplog):
+    path = tmp_path / "sites.json"
+    path.write_text(json.dumps({"sites": [{"name": "later", "enabled": False, "start_urls": ["https://x.example/"]}]}))
+    assert load_sites(path) == []
+    assert "skipped" not in caplog.text
+
+
+def test_shipped_sites_file_lists_every_requested_site_switched_off_until_its_selectors_are_set():
+    raw = json.loads(SITES_FILE.read_text(encoding="utf-8"))["sites"]
+    waiting = [s for s in raw if not s.get("enabled", True) and s.get("todo")]
+    assert len(waiting) == 53
+    assert len({s["name"] for s in raw}) == len(raw)

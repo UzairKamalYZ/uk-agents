@@ -10,7 +10,7 @@
 #   rest       clients.rest.main          REST API           http://localhost:8000
 #   telegram   clients.telegram.main      Telegram bot       (TELEGRAM_BOT_TOKEN)
 #   streamlit  clients.streamlit.main     Streamlit UI       http://localhost:8501 (needs rest)
-#   crawler    property_crawler.main      property crawler   every hour → Pinecone
+#   crawler    property_crawler.main      property crawler   04:30 + 13:00 → Pinecone
 #   cron       clients.cron.main          optional: CRON_SEARCH_PROMPT every 30 min
 #   whatsapp   agents.whatsapp.main       optional: WhatsApp group listener (WHATSAPP_*)
 #   mails      agents.mails.main          optional: IMAP mail digest monitor (MAIL_*)

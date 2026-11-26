@@ -4,8 +4,9 @@ Pure HTML in, data out — no browser, so it is tested on plain HTML strings.
 """
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass, field
-from urllib.parse import urldefrag, urljoin
+from urllib.parse import parse_qsl, urldefrag, urlencode, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup, Tag
 
@@ -72,6 +73,21 @@ class Listing:
             parts.append(self.description)
         return " ".join(p for p in parts if p)
 
+    @property
+    def fingerprint(self) -> str | None:
+        """
+        The property itself, whichever site lists it: rent/sale, where, price, size, type. The same
+        flat on an agency's site, a portal and an aggregator gets the same fingerprint, so it is
+        stored once. None when too little is known to tell two properties apart safely.
+        """
+        where = self.postcode or _fold(self.city)
+        if self.price is None or not where or (self.area is None and self.rooms is None):
+            return None
+        parts = [self.deal or "?", where.replace(" ", ""), _fmt(round(self.price)),
+                 _fmt(round(self.area)) if self.area is not None else "?",
+                 _fmt(self.rooms) if self.rooms is not None else "?", _fold(self.property_type) or "?"]
+        return "|".join(parts)
+
     def content_hash(self) -> str:
         """Changes when anything that is indexed changes (e.g. a price drop)."""
         return hashlib.sha1(self.text.encode("utf-8")).hexdigest()
@@ -125,6 +141,12 @@ def parse_number(text: str | None) -> float | None:
         return None
 
 
+def _fold(text: str | None) -> str:
+    """'Liège ' → 'liege': lower case, no accents, single spaces."""
+    text = unicodedata.normalize("NFKD", text or "")
+    return re.sub(r"\s+", " ", "".join(c for c in text if not unicodedata.combining(c))).strip().lower()
+
+
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
@@ -142,8 +164,18 @@ def _read(card: Tag, spec: FieldSelector) -> str:
     return text
 
 
+# Query parameters that only track the visit; the same ad with and without them is one listing
+_TRACKING = re.compile(r"^(utm_\w+|fbclid|gclid|gclsrc|dclid|msclkid|mc_[ce]id|_ga|_gl|ref|referrer|source|"
+                       r"searchid|search_id|position|pos|rank|from|origin|xtor|trk|tracking\w*)$", re.IGNORECASE)
+
+
 def _absolute(href: str, page_url: str) -> str:
-    return urldefrag(urljoin(page_url, href.strip()))[0]
+    url = urldefrag(urljoin(page_url, href.strip()))[0]
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _TRACKING.match(k)]
+    return urlunsplit(parts._replace(query=urlencode(query)))
 
 
 _KNOWN_FIELDS = {"title", "price", "city", "rooms", "area", "type", "description", "url",

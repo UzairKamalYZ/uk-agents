@@ -1,5 +1,5 @@
 """
-SQLite record of every listing the crawler has indexed, so each hourly pass embeds
+SQLite record of every listing the crawler has indexed, so each pass embeds
 only what is new or changed.
 
 The `listings` table also keeps each listing's details (title, price, city, deal,
@@ -43,6 +43,8 @@ class SeenStore:
                    reason TEXT NOT NULL
                )"""
         )
+        # Bookkeeping, e.g. when the last pass started (so a missed scheduled pass is caught up)
+        self._conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         self._migrate()
         self._conn.commit()
 
@@ -53,6 +55,8 @@ class SeenStore:
         ("area", "REAL"), ("property_type", "TEXT"), ("deal", "TEXT"), ("availability", "TEXT"),
         ("photo", "TEXT"), ("extra", "TEXT"),          # extra: JSON object of the site's other fields
         ("updated_at", "TEXT"),                         # when the details last changed
+        ("fingerprint", "TEXT"),                        # the property, whichever site lists it
+        ("duplicate_of", "TEXT"),                       # id of the same property on another site
     ]
 
     def _migrate(self) -> None:
@@ -62,6 +66,19 @@ class SeenStore:
             if name not in have:
                 self._conn.execute(f"ALTER TABLE listings ADD COLUMN {name} {sql_type}")
         self._conn.execute("CREATE INDEX IF NOT EXISTS listings_first_seen ON listings (first_seen)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS listings_fingerprint ON listings (fingerprint)")
+
+    # --- passes --------------------------------------------------------------
+
+    def last_pass(self) -> datetime | None:
+        row = self._conn.execute("SELECT value FROM meta WHERE key = 'last_pass'").fetchone()
+        return datetime.fromisoformat(row[0]) if row else None
+
+    def record_pass(self, started: datetime) -> None:
+        self._conn.execute("INSERT INTO meta (key, value) VALUES ('last_pass', ?) "
+                           "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                           (started.isoformat(timespec="seconds"),))
+        self._conn.commit()
 
     # --- back-off ------------------------------------------------------------
 
@@ -109,10 +126,25 @@ class SeenStore:
                 fresh.append(listing)
         return fresh
 
-    def touch(self, listings: list[Listing], when: str | None = None) -> None:
+    def original_of(self, listing: Listing) -> str | None:
+        """The id of the same property already stored from another site, or None if this one is the first."""
+        fingerprint = listing.fingerprint
+        if fingerprint is None:
+            return None
+        row = self._conn.execute(
+            "SELECT id FROM listings WHERE fingerprint = ? AND site != ? AND duplicate_of IS NULL AND id != ? "
+            "ORDER BY first_seen LIMIT 1",
+            (fingerprint, listing.site, listing.id),
+        ).fetchone()
+        return row[0] if row else None
+
+    def touch(self, listings: list[Listing], when: str | None = None,
+              duplicate_of: dict[str, str] | None = None) -> None:
         """Store new or changed listings with their details, seen now (call after they are safely
-        in the vector store). first_seen is kept from the first time a listing was stored."""
+        in the vector store). first_seen is kept from the first time a listing was stored.
+        duplicate_of: listing id → id of the same property on another site (that one is indexed)."""
         when = when or utc_now()
+        duplicate_of = duplicate_of or {}
         rows = []
         for l in listings:
             rows.append((
@@ -120,12 +152,13 @@ class SeenStore:
                 l.title or None, l.description or None, l.city, l.postcode, l.price, l.price_text or None,
                 l.currency, l.rooms, l.area, l.property_type, l.deal, l.availability, l.photo,
                 json.dumps(l.extra, ensure_ascii=False) if l.extra else None, when,
+                l.fingerprint, duplicate_of.get(l.id),
             ))
         self._conn.executemany(
             """INSERT INTO listings (id, site, url, content_hash, first_seen, last_seen,
                    title, description, city, postcode, price, price_text, currency, rooms, area,
-                   property_type, deal, availability, photo, extra, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   property_type, deal, availability, photo, extra, updated_at, fingerprint, duplicate_of)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    content_hash = excluded.content_hash, last_seen = excluded.last_seen,
                    url = excluded.url, title = excluded.title, description = excluded.description,
@@ -133,7 +166,8 @@ class SeenStore:
                    price_text = excluded.price_text, currency = excluded.currency, rooms = excluded.rooms,
                    area = excluded.area, property_type = excluded.property_type, deal = excluded.deal,
                    availability = excluded.availability, photo = excluded.photo, extra = excluded.extra,
-                   updated_at = excluded.updated_at""",
+                   updated_at = excluded.updated_at, fingerprint = excluded.fingerprint,
+                   duplicate_of = excluded.duplicate_of""",
             rows,
         )
         self._conn.commit()
