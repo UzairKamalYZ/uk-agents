@@ -37,15 +37,28 @@ class SiteResult:
     site: str
     pages: int = 0
     found: int = 0
+    new: int = 0                    # listings never stored before (indexed also counts changed ones)
     indexed: int = 0
     error: str | None = None
     blocked: str | None = None      # why the site refused us this pass
     skipped: str | None = None      # still backing off from an earlier block
 
+    @property
+    def status(self) -> str:
+        if self.skipped:
+            return "skipped"
+        if self.blocked:
+            return "blocked"
+        return "error" if self.error else "ok"
+
+    @property
+    def detail(self) -> str | None:
+        return self.skipped or self.blocked or self.error
+
     def describe(self) -> str:
         if self.skipped:
             return f"{self.site}: skipped ({self.skipped})"
-        text = f"{self.site}: {self.pages} page(s), {self.found} listing(s), {self.indexed} new/changed"
+        text = f"{self.site}: {self.pages} page(s), {self.found} listing(s), {self.new} new, {self.indexed} indexed"
         if self.blocked:
             text += f", blocked: {self.blocked}"
         if self.error:
@@ -163,7 +176,8 @@ class PropertyCrawler:
             if not listings:
                 logger.warning("[crawler] %s: no listings matched %r on %s — check the selectors",
                                site.name, site.listing_selector, url)
-            fresh, indexed = self._index(listings)
+            fresh, new, indexed = self._index(listings)
+            result.new += new
             result.indexed += indexed
             if site.stop_when_seen and listings and not fresh:
                 logger.info("[crawler] %s: nothing new on %s — not paging further", site.name, url)
@@ -176,10 +190,12 @@ class PropertyCrawler:
             self._sleep(self._jitter(self._delay))
         self._loads += 1
 
-    def _index(self, listings: list[Listing]) -> tuple[list[Listing], int]:
-        """New or changed listings, and how many of them were embedded. The same property already
+    def _index(self, listings: list[Listing]) -> tuple[list[Listing], int, int]:
+        """New or changed listings, how many were never stored before, and how many were embedded. The same property already
         stored from another site (same fingerprint) is recorded as its duplicate, not embedded again."""
         fresh = self._store.unseen(listings)
+        known = self._store.known_ids([l.id for l in fresh])
+        new = sum(1 for l in fresh if l.id not in known)
         duplicate_of = {}
         for listing in fresh:
             original = self._store.original_of(listing)
@@ -196,4 +212,4 @@ class PropertyCrawler:
                         len(duplicate_of))
         fresh_ids = {l.id for l in fresh}
         self._store.seen_again([l for l in listings if l.id not in fresh_ids])
-        return fresh, len(originals)
+        return fresh, new, len(originals)
