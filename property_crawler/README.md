@@ -81,7 +81,7 @@ The crawler never tries to get *past* a block. It doesn't solve CAPTCHAs, fake a
 | `name` | required | Shown in logs, stored as the `site` metadata |
 | `start_urls` (or `url`) | required | Listing pages to start from. Sort them newest first, so `stop_when_seen` can stop early |
 | `listing_selector` | required | CSS selector matching one listing card |
-| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr", "pattern"}`: an attribute instead of the text, and/or a regex whose first group is kept (`"(\\d+)\\s*bdr"` reads `2` from `2 bdr. 85 m²`). `price`, `rooms` and `area` are parsed into numbers (`3 500 €` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description`, `url`, `deal` (a "For rent" / "Te koop" label), `availability` (a status badge such as "Under offer") and `photo` (use `"attr": "src"`) are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
+| `fields` | `{}` | Field → CSS selector *inside the card* (its text), or `{"selector", "attr", "pattern"}`: an attribute instead of the text, and/or a regex whose first group is kept (`"(\\d+)\\s*bdr"` reads `2` from `2 bdr. 85 m²`). The selector `:scope` reads the whole card, so a pattern can pick a value out of the card's text wherever it sits (handy when a site's class names are hashed). `price`, `rooms` and `area` are parsed into numbers (`3 500 €` → 3500, `48,5 m²` → 48.5). `title`, `city`, `type`, `description`, `url`, `deal` (a "For rent" / "Te koop" label), `availability` (a status badge such as "Under offer") and `photo` (use `"attr": "src"`) are known fields; any other field (e.g. `floor`) is added to the text and metadata as is |
 | `link_selector` | `a[href]` | Link to the listing inside the card. It is the listing's identity. A card without a link gets an ID from its text |
 | `next_page_selector` | none | Link to the next results page |
 | `max_pages` | `1` | Pages followed per start URL |
@@ -94,7 +94,7 @@ The crawler never tries to get *past* a block. It doesn't solve CAPTCHAs, fake a
 | `enabled` | `true` | `false` keeps the entry without crawling it; a switched-off entry may lack its selectors |
 | `todo` | none | A note on what is missing before the site can be switched on (ignored by the crawler) |
 
-The shipped `sites.json` crawls Immoweb (see below) and holds one disabled example, plus 53 more Belgian portals, agencies, classifieds and student-housing sites, switched off with a `todo`: each needs its newest-first search page in `start_urls`, its card selectors, and `"enabled": true`. To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
+The shipped `sites.json` crawls Immoweb (see below) and 24 more Belgian portals, agencies, classifieds and student-housing sites; it also holds one disabled example. The other 29 sites asked for are kept switched off, each with a `todo` saying why (it refuses automated browsers, is down, duplicates a crawled site, or has no listing pages). To find selectors, open a listing page in Chrome, right-click a listing → Inspect, and pick the class shared by every card. A site whose selectors match nothing logs `no listings matched … check the selectors`.
 
 ## What the crawler works out for each listing
 

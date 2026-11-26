@@ -144,18 +144,31 @@ def test_missing_sites_file_is_reported(tmp_path, caplog):
     assert "sites.json" in caplog.text
 
 
-def test_shipped_sites_file_crawls_immoweb_only():
+def test_shipped_sites_file_crawls_immoweb_first():
     sites = load_sites(SITES_FILE)
-    assert [s.name for s in sites] == ["immoweb"]
+    assert sites[0].name == "immoweb"
     assert sites[0].start_urls[0].startswith("https://www.immoweb.be/en/search/")
     assert sites[0].currency == "EUR"
     assert [detect_deal(u) for u in sites[0].start_urls] == ["rent", "sale"]
+    assert len({s.name for s in sites}) == len(sites)
+
+
+def test_every_enabled_site_has_selectors_that_compile():
+    import soupsieve
+    for site in load_sites(SITES_FILE):
+        selectors = [site.listing_selector, site.link_selector, site.next_page_selector,
+                     *(f.selector for f in site.fields.values())]
+        for selector in filter(None, selectors):
+            if selector != ":scope":
+                soupsieve.compile(selector)   # raises on a selector BeautifulSoup can't run
+        # Extracting from an empty page must not raise either
+        assert extract_listings("<html></html>", site, site.start_urls[0]) == []
 
 
 def test_immoweb_config_reads_a_result_card():
     # Markup as Immoweb's result cards were last known to look; the live site could not be
     # loaded to confirm it (Cloudflare refuses automated browsers from datacenter IPs).
-    [immoweb] = load_sites(SITES_FILE)
+    immoweb = load_sites(SITES_FILE)[0]
     card = (
         '<article class="card card--result">'
         '<h2 class="card__title"><a class="card__title-link" href="https://www.immoweb.be/en/classified/'
@@ -181,6 +194,14 @@ def test_a_field_pattern_keeps_its_first_group():
     [listing] = extract_listings(html, site, "https://portal.example/")
     assert (listing.rooms, listing.area) == (3, 120)
     assert "garden" not in listing.extra
+
+
+def test_a_scope_field_reads_the_whole_card():
+    site = _site(fields={"price": FieldSelector(":scope", pattern=r"€\s*([\d.,]+)"),
+                         "area": FieldSelector(":scope", pattern=r"(\d+)\s*m²")})
+    html = _page(['<article class="offer"><a href="/o/1">Flat</a><div><b>€ 1.250</b> <i>85 m²</i></div></article>'])
+    [listing] = extract_listings(html, site, "https://portal.example/")
+    assert (listing.price, listing.area) == (1250, 85)
 
 
 # --- classification ---------------------------------------------------------
@@ -640,6 +661,11 @@ def test_compatible_index_passes_the_check():
     check_compatible(_description(), "listings", 384)
 
 
+def test_index_whose_schema_holds_only_its_vector_fields_is_accepted():
+    # How Pinecone describes every plain vector index since its 2026-07 API
+    check_compatible(_description(384, {"_values": 1, "_sparse_values": 2}), "listings", 384)
+
+
 def test_index_with_a_document_schema_is_rejected():
     with pytest.raises(IncompatibleIndexError, match="document schema"):
         check_compatible(_description(1024, {"title": 1, "chunk_text": 2}), "listings", 384)
@@ -1032,8 +1058,9 @@ def test_a_switched_off_site_needs_no_selectors(tmp_path, caplog):
     assert "skipped" not in caplog.text
 
 
-def test_shipped_sites_file_lists_every_requested_site_switched_off_until_its_selectors_are_set():
+def test_shipped_sites_file_keeps_every_requested_site_and_says_why_one_is_off():
     raw = json.loads(SITES_FILE.read_text(encoding="utf-8"))["sites"]
-    waiting = [s for s in raw if not s.get("enabled", True) and s.get("todo")]
-    assert len(waiting) == 53
+    assert len(raw) == 55   # immoweb, the example and the 53 requested sites
+    off = [s for s in raw if not s.get("enabled", True) and s["name"] != "example-portal"]
+    assert off and all(s.get("todo") for s in off)
     assert len({s["name"] for s in raw}) == len(raw)
