@@ -142,6 +142,7 @@ Every pass is logged in `seen.db`, and **my-stats' Crawler page reads it read-on
 | `id` | Pass number |
 | `started_at`, `finished_at` | ISO 8601, UTC. `finished_at` is empty while the pass runs (or if its process died) |
 | `status` | `running`, `ok`, `stopped` (shut down mid-pass) or `failed` |
+| `trigger` | What started it: `schedule`, `once` (`--once`) or `request` (my-stats' *Run crawler now*) |
 | `error` | Why a `failed` pass failed |
 
 `crawl_run_sites` — one row per site in a pass:
@@ -159,6 +160,8 @@ Every pass is logged in `seen.db`, and **my-stats' Crawler page reads it read-on
 ## When it runs
 
 At `CRAWLER_RUN_AT`: by default 04:30, after the night's new listings are up, and 13:00. The start of each pass is kept in `CRAWLER_DB_FILE`, so the crawler knows what it missed: when it starts (first run, a reboot, a deploy) and the last scheduled pass didn't happen, it runs one straight away, then goes back to the schedule. A deploy in between two passes doesn't trigger an extra one. `--once` runs a pass now, whatever the time.
+
+**Run now from my-stats.** The Crawler page's *Run crawler now* button writes a request file (`CRAWLER_REQUEST_FILE`, by default `run-now` next to `seen.db`). The running crawler checks for it every second while it waits for its next pass, deletes it and starts a pass straight away. A request that comes less than `CRAWLER_REQUEST_COOLDOWN_MINUTES` (15) after the last pass started is deleted and ignored, so the button can't hammer the sites; back-offs apply as always. The extra pass doesn't move the schedule: the next scheduled pass still runs at its time. Nothing happens if the crawler service isn't running (`--once` doesn't watch for requests).
 
 ## Duplicates
 
@@ -213,6 +216,8 @@ It deletes from `PINECONE_INDEX_NAME`, in the default namespace, and can't be un
 | `CRAWLER_MAX_BACK_OFF_HOURS` | `24` | The longest back-off |
 | `CRAWLER_RESPECT_ROBOTS` | `true` | Skip URLs the site's robots.txt disallows |
 | `CRAWLER_BROWSER_PATH` | _(empty)_ | A Chromium binary to use instead of Playwright's own |
+| `CRAWLER_REQUEST_FILE` | _(empty)_ → `run-now` next to `CRAWLER_DB_FILE` | The "run now" request file my-stats writes (see [When it runs](#when-it-runs)) |
+| `CRAWLER_REQUEST_COOLDOWN_MINUTES` | `15` | A run request this soon after the last pass started is ignored |
 
 | `PINECONE_API_KEY` / `PINECONE_INDEX_NAME` | — | The index listings are written to (created if missing: serverless, cosine, AWS us-east-1) |
 | `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model, which must be the one the searching app uses |

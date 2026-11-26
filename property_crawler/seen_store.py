@@ -69,6 +69,9 @@ class SeenStore:
                )"""
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS crawl_runs_started ON crawl_runs (started_at)")
+        if "trigger" not in {row[1] for row in self._conn.execute("PRAGMA table_info(crawl_runs)")}:
+            # What started the pass: schedule | once (python -m property_crawler.main --once) | request (my-stats)
+            self._conn.execute("ALTER TABLE crawl_runs ADD COLUMN trigger TEXT NOT NULL DEFAULT 'schedule'")
         self._migrate()
         self._conn.commit()
 
@@ -106,10 +109,11 @@ class SeenStore:
 
     # --- crawl history ---------------------------------------------------------
 
-    def start_run(self, started: datetime) -> int:
-        """A pass begins: status 'running' until finish_run (a pass whose process died stays 'running')."""
-        cur = self._conn.execute("INSERT INTO crawl_runs (started_at, status) VALUES (?, 'running')",
-                                 (started.isoformat(timespec="seconds"),))
+    def start_run(self, started: datetime, trigger: str = "schedule") -> int:
+        """A pass begins: status 'running' until finish_run (a pass whose process died stays 'running').
+        trigger: schedule | once | request."""
+        cur = self._conn.execute("INSERT INTO crawl_runs (started_at, status, trigger) VALUES (?, 'running', ?)",
+                                 (started.isoformat(timespec="seconds"), trigger))
         self._conn.commit()
         return cur.lastrowid
 

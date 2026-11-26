@@ -792,10 +792,75 @@ def test_blocked_and_skipped_sites_are_recorded_with_the_reason(tmp_path):
     assert skipped["status"] == "skipped" and "backing off" in skipped["detail"]
 
 
+def _waiting_service(tmp_path, last_pass: str, now: str):
+    """A service whose next scheduled pass (13:00 Brussels = 12:00 UTC) is hours away."""
+    with SeenStore(tmp_path / "seen.db") as store:
+        store.record_pass(_utc(last_pass))
+    clock = {"now": _utc(now)}
+    settings = Settings(sites_file=tmp_path / "none.json", db_file=tmp_path / "seen.db", respect_robots=False,
+                        run_at="04:30,13:00")
+
+    def sleep(seconds):
+        clock["now"] += timedelta(seconds=seconds)
+        if clock["now"] > _utc(now) + timedelta(minutes=5):
+            service.stop()                       # nothing started it: give up
+
+    service = CrawlerService(settings, indexer=FakeIndexer(), fetcher_factory=MagicMock(),
+                             clock=lambda: clock["now"], sleep=sleep)
+    triggers = []
+    service.run_once = MagicMock(side_effect=lambda trigger=None: (triggers.append(trigger), service.stop()))
+    return service, triggers
+
+
+def test_a_run_request_starts_a_pass_now_and_is_consumed(tmp_path):
+    service, triggers = _waiting_service(tmp_path, "2026-11-26T03:30:00", "2026-11-26T08:00:00")
+    request = tmp_path / "run-now"
+    request.write_text("{}")
+    service.start()
+    assert triggers == ["request"] and not request.exists()
+
+
+def test_a_run_request_soon_after_a_pass_is_ignored(tmp_path):
+    service, triggers = _waiting_service(tmp_path, "2026-11-26T07:55:00", "2026-11-26T08:00:00")
+    request = tmp_path / "run-now"
+    request.write_text("{}")
+    service.start()
+    assert triggers == [] and not request.exists()   # dropped, not kept for later
+
+
+def test_the_request_file_can_be_set(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRAWLER_DB_FILE", str(tmp_path / "data" / "seen.db"))
+    assert Settings.from_env().run_request_file == tmp_path / "data" / "run-now"
+    monkeypatch.setenv("CRAWLER_REQUEST_FILE", str(tmp_path / "go"))
+    assert Settings.from_env().run_request_file == tmp_path / "go"
+
+
+def test_each_pass_records_what_started_it(tmp_path):
+    times = iter([_utc("2026-11-26T12:00:00"), _utc("2026-11-26T12:00:05")] * 2)
+    service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
+                             fetcher_factory=MagicMock(), clock=lambda: next(times))
+    service.run_once()
+    service.run_once("request")
+    with SeenStore(tmp_path / "seen.db") as store:
+        assert [r["trigger"] for r in store.runs()] == ["request", "once"]
+
+
+def test_crawl_runs_from_before_triggers_get_the_column(tmp_path):
+    db = tmp_path / "seen.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE crawl_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, "
+                 "finished_at TEXT, status TEXT NOT NULL, error TEXT)")
+    conn.execute("INSERT INTO crawl_runs (started_at, status) VALUES ('2026-11-25T12:00:00+00:00', 'ok')")
+    conn.commit()
+    conn.close()
+    with SeenStore(db) as store:
+        assert store.runs()[0]["trigger"] == "schedule"
+
+
 def test_service_stop_ends_start(tmp_path):
     service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
                              fetcher_factory=MagicMock())
-    service.run_once = MagicMock(side_effect=lambda: service.stop())
+    service.run_once = MagicMock(side_effect=lambda trigger=None: service.stop())
     service.start()   # returns instead of sleeping an hour
     service.run_once.assert_called_once()
 
@@ -857,7 +922,7 @@ def test_service_waits_for_the_next_scheduled_time(tmp_path):
     service = CrawlerService(_settings(tmp_path, tmp_path / "none.json"), indexer=FakeIndexer(),
                              fetcher_factory=MagicMock(), clock=lambda: clock["now"], sleep=sleep)
     passes = []
-    service.run_once = MagicMock(side_effect=lambda: (passes.append(clock["now"]), service.stop()))
+    service.run_once = MagicMock(side_effect=lambda trigger=None: (passes.append(clock["now"]), service.stop()))
     service.start()
     assert passes == [_utc("2026-11-26T12:00:00")]           # 13:00 Brussels
     assert len(slept) == 14

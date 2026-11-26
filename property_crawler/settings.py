@@ -50,10 +50,17 @@ class Settings:
     max_back_off_hours: int = 24
     respect_robots: bool = True
     browser_path: str = ""
+    # "Run now" from my-stats: a file whose appearance starts a pass (empty path → next to db_file)
+    request_file: Path | None = None
+    request_cooldown_minutes: int = 15   # a request this soon after the last pass started is ignored
     # Where listings go — the same index, embedding model and namespace the searching app uses
     pinecone_api_key: str = ""
     pinecone_index_name: str = ""
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    @property
+    def run_request_file(self) -> Path:
+        return self.request_file or Path(self.db_file).parent / "run-now"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -71,6 +78,8 @@ class Settings:
             max_back_off_hours=int(os.getenv("CRAWLER_MAX_BACK_OFF_HOURS") or 24),
             respect_robots=_bool("CRAWLER_RESPECT_ROBOTS", "true"),
             browser_path=os.getenv("CRAWLER_BROWSER_PATH", ""),
+            request_file=_path("CRAWLER_REQUEST_FILE", "") if os.getenv("CRAWLER_REQUEST_FILE") else None,
+            request_cooldown_minutes=int(os.getenv("CRAWLER_REQUEST_COOLDOWN_MINUTES") or 15),
             pinecone_api_key=os.getenv("PINECONE_API_KEY", ""),
             pinecone_index_name=os.getenv("PINECONE_INDEX_NAME", ""),
             embedding_model=os.getenv("SENTENCE_TRANSFORMER_MODEL") or "sentence-transformers/all-MiniLM-L6-v2",
