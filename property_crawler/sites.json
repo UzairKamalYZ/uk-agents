@@ -39,58 +39,766 @@
       "currency": "EUR",
       "property_type": "Apartment"
     },
-    {"name": "xpatris", "enabled": false, "start_urls": ["https://www.xpatris.com/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "monimmoradar", "enabled": false, "start_urls": ["https://monimmoradar.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "okoti", "enabled": false, "start_urls": ["https://www.okoti.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immo-mitula", "enabled": false, "start_urls": ["https://immo.mitula.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "nestoria", "enabled": false, "start_urls": ["https://www.nestoria.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immo-trovit", "enabled": false, "start_urls": ["https://immo.trovit.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "2dehands", "enabled": false, "start_urls": ["https://www.2dehands.be/l/immo/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "2ememain", "enabled": false, "start_urls": ["https://www.2ememain.be/l/immo/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "koopjeskrant", "enabled": false, "start_urls": ["https://www.koopjeskrant.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "locanto", "enabled": false, "start_urls": ["https://www.locanto.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "vivastreet", "enabled": false, "start_urls": ["https://www.vivastreet.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "century21", "enabled": false, "start_urls": ["https://www.century21.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "dewaele", "enabled": false, "start_urls": ["https://www.dewaele.com/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "era", "enabled": false, "start_urls": ["https://www.era.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "engelvoelkers", "enabled": false, "start_urls": ["https://www.engelvoelkers.com/be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "heylenvastgoed", "enabled": false, "start_urls": ["https://www.heylenvastgoed.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "latouretpetit", "enabled": false, "start_urls": ["https://www.latouretpetit.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "remax", "enabled": false, "start_urls": ["https://www.remax.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "sothebysrealty", "enabled": false, "start_urls": ["https://www.sothebysrealty.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "trevi", "enabled": false, "start_urls": ["https://www.trevi.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "weinvest", "enabled": false, "start_urls": ["https://weinvest.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "1toit2ages", "enabled": false, "start_urls": ["https://www.1toit2ages.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immobrussels", "enabled": false, "start_urls": ["https://www.immobrussels.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immoscoop", "enabled": false, "start_urls": ["https://www.immoscoop.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immovlan", "enabled": false, "start_urls": ["https://www.immovlan.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "zimmo", "enabled": false, "start_urls": ["https://www.zimmo.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immo-notaris", "enabled": false, "start_urls": ["https://immo.notaris.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "entre-particuliers", "enabled": false, "start_urls": ["https://www.entre-particuliers.com/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immo-particulier", "enabled": false, "start_urls": ["https://www.immo-particulier.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "biddit", "enabled": false, "start_urls": ["https://www.biddit.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "spotto", "enabled": false, "start_urls": ["https://www.spotto.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "belgimmo", "enabled": false, "start_urls": ["https://www.belgimmo.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immo-at-home", "enabled": false, "start_urls": ["https://www.immo-at-home.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immoproxio", "enabled": false, "start_urls": ["https://www.immoproxio.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immotransit", "enabled": false, "start_urls": ["https://www.immotransit.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immopocket", "enabled": false, "start_urls": ["https://www.immopocket.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "realo", "enabled": false, "start_urls": ["https://www.realo.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "finder", "enabled": false, "start_urls": ["https://www.finder.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "myfinn", "enabled": false, "start_urls": ["https://myfinn.io/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immomaps", "enabled": false, "start_urls": ["https://www.immomaps.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "immospeurder", "enabled": false, "start_urls": ["https://www.immospeurder.com/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "rentola", "enabled": false, "start_urls": ["https://rentola.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "roomlala", "enabled": false, "start_urls": ["https://www.roomlala.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "appartager", "enabled": false, "start_urls": ["https://www.appartager.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "brukot", "enabled": false, "start_urls": ["https://www.brukot.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "generation-campus", "enabled": false, "start_urls": ["https://www.generation-campus.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "kotplanet", "enabled": false, "start_urls": ["https://kotplanet.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "kotzoeker", "enabled": false, "start_urls": ["https://www.kotzoeker.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "mykot", "enabled": false, "start_urls": ["https://www.mykot.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "skot", "enabled": false, "start_urls": ["https://www.skot.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "ikot", "enabled": false, "start_urls": ["https://www.ikot.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "student", "enabled": false, "start_urls": ["https://www.student.be/"], "todo": "find the newest-first search page and the card selectors"},
-    {"name": "bnb", "enabled": false, "start_urls": ["https://www.bnb.brussels/"], "todo": "find the newest-first search page and the card selectors"}
+    {
+      "name": "monimmoradar",
+      "start_urls": [
+        "https://monimmoradar.be/en/for-rent",
+        "https://monimmoradar.be/en/for-sale"
+      ],
+      "listing_selector": "ul li:has(> a[href*='/bien/'])",
+      "link_selector": "a[href*='/bien/']",
+      "fields": {
+        "title": "a > div > div > p",
+        "price": {
+          "selector": ":scope",
+          "pattern": "(€\\s?\\d[\\d.,]*(?:\\s\\d{3})*|\\d[\\d.,]*(?:\\s\\d{3})*\\s?€)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*(?:ch\\b|ch\\.|chambre)"
+        },
+        "city": {
+          "selector": "a > div > div > p",
+          "pattern": "-\\s+([1-9]\\d{3}\\s+.+?)\\s+-\\s"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a[href*='page=']:-soup-contains('Next')",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "okoti",
+      "start_urls": [
+        "https://www.okoti.be/en/search/property/for-rent",
+        "https://www.okoti.be/en/search/property/for-sale"
+      ],
+      "listing_selector": "a.r1-listcard",
+      "link_selector": "a[href]",
+      "fields": {
+        "price": {
+          "selector": ":scope",
+          "pattern": "(€\\s?\\d[\\d.,]*(?:\\s\\d{3})*|\\d[\\d.,]*(?:\\s\\d{3})*\\s?€)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*(?:bd\\b|bdrm|bed|bedroom)"
+        },
+        "city": {
+          "selector": ":scope",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "photo": {
+          "selector": ".r1-listcard-photo img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a[href*='page=']:-soup-contains('Next')",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "2dehands",
+      "start_urls": [
+        "https://www.2dehands.be/l/immo/appartementen-en-studio-s-te-huur/",
+        "https://www.2dehands.be/l/immo/huizen-te-huur/",
+        "https://www.2dehands.be/l/immo/huizen-en-appartementen-te-koop/"
+      ],
+      "listing_selector": "li.hz-Listing",
+      "link_selector": "a[href*='/v/immo/']",
+      "fields": {
+        "title": "[class*=Listing-title]",
+        "description": "[class*=Listing-description]",
+        "price": "[class*=Listing-price]",
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": "img.hz-Image",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "locanto",
+      "start_urls": [
+        "https://www.locanto.be/g/Immo/R/"
+      ],
+      "listing_selector": "article.posting_listing",
+      "link_selector": "a.posting_listing__title",
+      "fields": {
+        "title": ".posting_listing__title",
+        "description": ".posting_listing__description",
+        "price": ".posting_listing__price",
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "type": ".posting_listing__category",
+        "photo": {
+          "selector": "img.posting_listing__image",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "vivastreet",
+      "start_urls": [
+        "https://www.vivastreet.be/annonces-location-appartement/be",
+        "https://www.vivastreet.be/annonces-achat-vente-appartement/be"
+      ],
+      "listing_selector": "li:has(h2)",
+      "link_selector": "a:has(h2)",
+      "fields": {
+        "title": "h2",
+        "description": "p",
+        "price": {
+          "selector": ":scope",
+          "pattern": "(€\\s?\\d[\\d.,]*(?:\\s\\d{3})*|\\d[\\d.,]*(?:\\s\\d{3})*\\s?€)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*(?:ch\\b|ch\\.|chambre)"
+        },
+        "city": {
+          "selector": ":scope",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a[rel~=next]",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "century21",
+      "start_urls": [
+        "https://www.century21.be/nl/te-huur",
+        "https://www.century21.be/nl/te-koop"
+      ],
+      "listing_selector": "div[class*='style-module--card--']",
+      "link_selector": "a[href*='/pand/']",
+      "fields": {
+        "price": {
+          "selector": ":scope",
+          "pattern": "(€\\s?\\d[\\d.,]*(?:\\s\\d{3})*|\\d[\\d.,]*(?:\\s\\d{3})*\\s?€)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "city": {
+          "selector": ":scope",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "photo": {
+          "selector": "picture img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "dewaele",
+      "start_urls": [
+        "https://www.dewaele.com/nl/te-huur/alle",
+        "https://www.dewaele.com/nl/te-koop/alle"
+      ],
+      "listing_selector": "a.relative.z-10[href*='/te-']",
+      "link_selector": "a[href]",
+      "fields": {
+        "title": "h3",
+        "city": {
+          "selector": "h3",
+          "pattern": "te (?:huur|koop)\\s+(.+)$"
+        },
+        "price": ".property-price",
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a.pagination__link:-soup-contains('Volgende')",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "era",
+      "start_urls": [
+        "https://www.era.be/en/for-rent",
+        "https://www.era.be/en/for-sale"
+      ],
+      "listing_selector": "article.node--property",
+      "link_selector": "a[href*='/for-']",
+      "fields": {
+        "title": ".field--name-title",
+        "price": ".field--price",
+        "city": {
+          "selector": ".field--address",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*bdrm"
+        },
+        "area": {
+          "selector": ".property-teaser__info",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a.seo-pager__link[rel~=next]",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "engelvoelkers",
+      "start_urls": [
+        "https://www.engelvoelkers.com/be/en/properties/res/rent/real-estate"
+      ],
+      "listing_selector": "article[class*='_article_']",
+      "link_selector": "a[href*='/exposes/']",
+      "fields": {
+        "title": "[data-testid=search-components_result-card_headline]",
+        "price": "[data-testid=search-components_result-card_price]",
+        "city": {
+          "selector": "[class*='_content_'] > p",
+          "pattern": "^([^,]+)"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*Bedroom"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "heylenvastgoed",
+      "start_urls": [
+        "https://www.heylenvastgoed.be/huren",
+        "https://www.heylenvastgoed.be/kopen"
+      ],
+      "listing_selector": "a.property-item",
+      "link_selector": "a[href]",
+      "fields": {
+        "price": ".property-item-info-header-left h3",
+        "type": ".property-item-info-header-right strong",
+        "city": {
+          "selector": ".property-item-info-header-right",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "area": ".property-item-info-details-surface",
+        "rooms": ".property-item-info-details-bedrooms",
+        "deal": ".property-item-info-header-left p",
+        "photo": {
+          "selector": ".property-item-image img, picture img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "latouretpetit",
+      "start_urls": [
+        "https://latouretpetit.be/nos-biens/location",
+        "https://latouretpetit.be/nos-biens/vente"
+      ],
+      "listing_selector": "a[href*='/nos-biens/'][href*='from_search']",
+      "link_selector": "a[href]",
+      "fields": {
+        "deal": {
+          "selector": ":scope",
+          "attr": "href"
+        },
+        "type": "[class*=footer_title]",
+        "price": "[class*=footer_price]",
+        "city": "[class*=EstateCard_tag]",
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*(?:ch\\b|ch\\.|chambre)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "trevi",
+      "start_urls": [
+        "https://www.trevi.be/fr/louer-bien-immobilier",
+        "https://www.trevi.be/fr/acheter-bien-immobilier"
+      ],
+      "listing_selector": "div.w-card-estate",
+      "link_selector": "a.w-card-estate__body",
+      "fields": {
+        "price": ".w-card-estate__price",
+        "type": {
+          "selector": ".w-card-estate__category_town",
+          "pattern": "(?:louer|vendre|Vendu|Loué|option)\\s+(\\S+)"
+        },
+        "city": {
+          "selector": ".w-card-estate__category_town",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*(?:ch\\b|ch\\.|chambre)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "weinvest",
+      "start_urls": [
+        "https://weinvest.be/properties/for-rent",
+        "https://weinvest.be/properties/for-sale"
+      ],
+      "listing_selector": "li:has(> a[href*='/property/'])",
+      "link_selector": "a[href*='/property/']",
+      "fields": {
+        "price": {
+          "selector": ":scope",
+          "pattern": "(€\\s?\\d[\\d.,]*(?:\\s\\d{3})*|\\d[\\d.,]*(?:\\s\\d{3})*\\s?€)"
+        },
+        "city": "p.truncate",
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*Bedroom"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "scrolls": 2,
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "immoscoop",
+      "start_urls": [
+        "https://www.immoscoop.be/zoeken/query?offerType=te-huur",
+        "https://www.immoscoop.be/zoeken/query?offerType=te-koop"
+      ],
+      "listing_selector": "a.shadow-card[href]",
+      "link_selector": "a[href]",
+      "fields": {
+        "title": "h3",
+        "price": {
+          "selector": ":scope",
+          "pattern": "(€\\s?\\d[\\d.,]*(?:\\s\\d{3})*|\\d[\\d.,]*(?:\\s\\d{3})*\\s?€)"
+        },
+        "city": {
+          "selector": "address",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a[href*='page=']:-soup-contains('Volgende')",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "zimmo",
+      "start_urls": [
+        "https://www.zimmo.be/nl/zoek/te-huur/appartement"
+      ],
+      "listing_selector": "zimmo-listing",
+      "link_selector": "h2 a[href]",
+      "fields": {
+        "title": "span.title",
+        "price": ".price",
+        "city": {
+          "selector": "address",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": ".main-image img, img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a:-soup-contains('Volgende pagina')",
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "immo-notaris",
+      "start_urls": [
+        "https://immo.notaris.be/fr/biens-a-vendre"
+      ],
+      "deal": "sale",
+      "listing_selector": "li.property__item",
+      "link_selector": "a[href*='/a-vendre/']",
+      "fields": {
+        "title": "h2",
+        "price": ".property__item--price",
+        "type": ".property__item--property-type",
+        "city": {
+          "selector": "h3",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "finder",
+      "start_urls": [
+        "https://finder.be/aanbod"
+      ],
+      "listing_selector": "article.listing-card-horizontal",
+      "link_selector": "a[href*='/woning/']",
+      "fields": {
+        "price": ".listing-card-price p",
+        "deal": ".listing-card-price span",
+        "city": "h2",
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*(?:slaapkamer|slpk)"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a[href*='p=']:-soup-contains('Volgende')",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "rentola",
+      "start_urls": [
+        "https://rentola.be/en/for-rent"
+      ],
+      "deal": "rent",
+      "listing_selector": "div:has(> a[href*='/listings/'])",
+      "link_selector": "a[href*='/listings/']",
+      "fields": {
+        "title": {
+          "selector": ":scope",
+          "pattern": "(\\d+ rooms? [a-z ]+ of \\d+m²)"
+        },
+        "price": {
+          "selector": ":scope",
+          "pattern": "(€\\s?\\d[\\d.,]*(?:\\s\\d{3})*|\\d[\\d.,]*(?:\\s\\d{3})*\\s?€)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*rooms?"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a[href*='page=']:-soup-contains('Next')",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "roomlala",
+      "start_urls": [
+        "https://www.roomlala.be/chambre-a-louer/belgique-5769"
+      ],
+      "deal": "rent",
+      "property_type": "Room",
+      "listing_selector": "div.js-search-listing",
+      "link_selector": "a[href*='/listing/']",
+      "fields": {
+        "title": ".listing-item__title",
+        "price": {
+          "selector": ".listing-item__prices-row",
+          "pattern": "(\\d[\\d.,\\s]*€)\\s*/\\s*mois"
+        },
+        "city": {
+          "selector": ".listing-item__type-n-people-row",
+          "pattern": "\\|\\s*(.+?\\(\\d{4}\\))"
+        },
+        "photo": {
+          "selector": ".slideshow__slide img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a.next",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "appartager",
+      "start_urls": [
+        "https://www.appartager.be/bruxelles/colocation-bruxelles",
+        "https://www.appartager.be/liege/colocation-liege",
+        "https://www.appartager.be/flandre-orientale/colocation-gand"
+      ],
+      "deal": "rent",
+      "property_type": "Room",
+      "listing_selector": "div.listing_item",
+      "link_selector": "a[href]",
+      "fields": {
+        "title": ".listing_item_details .heading",
+        "price": ".listing_item_price",
+        "city": {
+          "selector": ".listing_item_address",
+          "pattern": "([^,]+)$"
+        }
+      },
+      "next_page_selector": "a:-soup-contains('Suivant')",
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "brukot",
+      "start_urls": [
+        "https://www.brukot.be/search"
+      ],
+      "deal": "rent",
+      "city": "Bruxelles",
+      "listing_selector": "article.listing-teaser",
+      "link_selector": "a[href^='/BK/']",
+      "fields": {
+        "type": "a.link-to-detail",
+        "area": ".lm-surface",
+        "price": ".listing-rent--rent-wo-charges",
+        "city": {
+          "selector": ".listing-teaser-neighborhood",
+          "pattern": "^([^:/]+?)\\s*(?:[:/]|$)"
+        },
+        "description": ".listing-teaser-description-large",
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "next_page_selector": "a[rel~=next]",
+      "max_pages": 2,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "kotzoeker",
+      "start_urls": [
+        "https://www.kotzoeker.be/en/flat-search/leuven",
+        "https://www.kotzoeker.be/en/flat-search/gent",
+        "https://www.kotzoeker.be/en/flat-search/brussels",
+        "https://www.kotzoeker.be/en/flat-search/antwerpen"
+      ],
+      "deal": "rent",
+      "property_type": "Room",
+      "listing_selector": "div.chakra-linkbox",
+      "link_selector": "a[href*='/listing/']",
+      "fields": {
+        "title": "h2",
+        "price": {
+          "selector": ":scope",
+          "pattern": "€\\s*(\\d[\\d.,]*)"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "skot",
+      "start_urls": [
+        "https://skot.be/kot-bruxelles",
+        "https://skot.be/kot-liege",
+        "https://skot.be/kot-namur"
+      ],
+      "deal": "rent",
+      "listing_selector": "a.MapListing",
+      "link_selector": "a[href]",
+      "fields": {
+        "title": ".MapListing-title",
+        "price": ".MapListing-rent",
+        "city": {
+          "selector": ".Summary-address",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "description": ".MapListing-description",
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {
+      "name": "ikot",
+      "start_urls": [
+        "https://ikot.be/kot-leuven",
+        "https://ikot.be/kot-gent",
+        "https://ikot.be/kot-antwerpen",
+        "https://ikot.be/kot-brussel",
+        "https://ikot.be/kot-hasselt"
+      ],
+      "deal": "rent",
+      "listing_selector": "article.c-teaser--room",
+      "link_selector": "h2 a[href]",
+      "fields": {
+        "title": "h2",
+        "price": {
+          "selector": ":scope",
+          "pattern": "€\\s*(\\d[\\d.,]*)"
+        },
+        "city": {
+          "selector": "h3",
+          "pattern": "\\b([1-9]\\d{3}\\s+[A-ZÀ-Ý][\\wÀ-ÿ'’.-]*(?:[ -][A-ZÀ-Ý][a-zà-ÿ'’.-]+){0,3})"
+        },
+        "area": {
+          "selector": ":scope",
+          "pattern": "(?<![\\d.,])([1-9]\\d{0,2}(?:\\.\\d{3})+|[1-9]\\d*(?:[.,]\\d+)?)\\s?m(?:²|2)(?![\\w²])"
+        },
+        "rooms": {
+          "selector": ":scope",
+          "pattern": "(\\d+)\\s*(?:slaapkamer|slpk)"
+        },
+        "photo": {
+          "selector": "img",
+          "attr": "src"
+        }
+      },
+      "max_pages": 1,
+      "currency": "EUR",
+      "enabled": true
+    },
+    {"name": "xpatris", "enabled": false, "start_urls": ["https://www.xpatris.com/"], "todo": "domain does not resolve (checked 2026-11-26)"},
+    {"name": "immo-mitula", "enabled": false, "start_urls": ["https://immo.mitula.be/"], "todo": "refuses automated browsers (HTTP 401)"},
+    {"name": "nestoria", "enabled": false, "start_urls": ["https://www.nestoria.be/"], "todo": "refuses automated browsers (HTTP 401)"},
+    {"name": "immo-trovit", "enabled": false, "start_urls": ["https://immo.trovit.be/"], "todo": "refuses automated browsers (HTTP 401)"},
+    {"name": "2ememain", "enabled": false, "start_urls": ["https://www.2ememain.be/l/immo/"], "todo": "same marketplace and ads as 2dehands (crawled) — would only add duplicates"},
+    {"name": "koopjeskrant", "enabled": false, "start_urls": ["https://www.koopjeskrant.be/"], "todo": "site down (Cloudflare 522, checked 2026-11-26)"},
+    {"name": "remax", "enabled": false, "start_urls": ["https://www.remax.be/"], "todo": "redirects to remax.eu, which returned Cloudflare 520 (checked 2026-11-26)"},
+    {"name": "sothebysrealty", "enabled": false, "start_urls": ["https://www.sothebysrealty.be/"], "todo": "refuses automated browsers (HTTP 429)"},
+    {"name": "1toit2ages", "enabled": false, "start_urls": ["https://www.1toit2ages.be/"], "todo": "intergenerational housing association (Wix site), no listing pages"},
+    {"name": "immobrussels", "enabled": false, "start_urls": ["https://www.immobrussels.be/"], "todo": "a directory of agencies; its pages hold no listing cards"},
+    {"name": "immovlan", "enabled": false, "start_urls": ["https://www.immovlan.be/"], "todo": "refuses automated browsers (HTTP 403)"},
+    {"name": "entre-particuliers", "enabled": false, "start_urls": ["https://www.entre-particuliers.com/"], "todo": "homepage times out"},
+    {"name": "immo-particulier", "enabled": false, "start_urls": ["https://www.immo-particulier.be/"], "todo": "expired TLS certificate"},
+    {"name": "biddit", "enabled": false, "start_urls": ["https://www.biddit.be/"], "todo": "firewall rejects automated browsers (\"The requested URL was rejected\")"},
+    {"name": "spotto", "enabled": false, "start_urls": ["https://www.spotto.be/"], "todo": "results only appear after submitting a search form; no listing URL to start from"},
+    {"name": "belgimmo", "enabled": false, "start_urls": ["https://www.belgimmo.be/"], "todo": "domain does not resolve (checked 2026-11-26)"},
+    {"name": "immo-at-home", "enabled": false, "start_urls": ["https://www.immo-at-home.be/"], "todo": "homepage times out"},
+    {"name": "immoproxio", "enabled": false, "start_urls": ["https://www.immoproxio.be/"], "todo": "redirects to zimmo (crawled)"},
+    {"name": "immotransit", "enabled": false, "start_urls": ["https://www.immotransit.be/"], "todo": "invalid TLS certificate (Cloudflare 526)"},
+    {"name": "immopocket", "enabled": false, "start_urls": ["https://www.immopocket.be/"], "todo": "no listing pages found on the site"},
+    {"name": "realo", "enabled": false, "start_urls": ["https://www.realo.be/"], "todo": "shows a bot check to automated browsers"},
+    {"name": "myfinn", "enabled": false, "start_urls": ["https://myfinn.io/"], "todo": "a search-alert service, not a listing site"},
+    {"name": "immomaps", "enabled": false, "start_urls": ["https://www.immomaps.be/"], "todo": "refuses automated browsers (HTTP 429)"},
+    {"name": "immospeurder", "enabled": false, "start_urls": ["https://www.immospeurder.com/"], "todo": "results pages are a landing page; listings load elsewhere — find the real results URL"},
+    {"name": "generation-campus", "enabled": false, "start_urls": ["https://www.generation-campus.be/"], "todo": "one operator's own residences, no listing pages"},
+    {"name": "kotplanet", "enabled": false, "start_urls": ["https://kotplanet.be/"], "todo": "redirects to an unrelated news site (HTTP 403)"},
+    {"name": "mykot", "enabled": false, "start_urls": ["https://www.mykot.be/"], "todo": "no public listing pages found (listings need an account)"},
+    {"name": "student", "enabled": false, "start_urls": ["https://www.student.be/"], "todo": "student.be is a jobs site, not housing"},
+    {"name": "bnb", "enabled": false, "start_urls": ["https://www.bnb.brussels/"], "todo": "listing pages hold no listing cards in the HTML (loaded on demand)"}
   ]
 }

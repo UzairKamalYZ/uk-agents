@@ -15,6 +15,7 @@ from .classify import (AVAILABLE, deal_from_label, detect_availability, detect_d
 from .sites import FieldSelector, Site
 
 MAX_DESCRIPTION_CHARS = 1000
+CARD_ITSELF = ":scope"   # a field selector that reads the whole card (usually with a pattern)
 
 ID_PREFIX = "crawl-"   # every vector id the crawler writes starts with this
 
@@ -152,7 +153,7 @@ def _clean(text: str) -> str:
 
 
 def _read(card: Tag, spec: FieldSelector) -> str:
-    node = card.select_one(spec.selector)
+    node = card if spec.selector == CARD_ITSELF else card.select_one(spec.selector)
     if node is None:
         return ""
     text = _clean(str(node.get(spec.attr) or "")) if spec.attr else _clean(node.get_text(" "))

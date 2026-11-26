@@ -17,13 +17,19 @@ class IncompatibleIndexError(RuntimeError):
     """The named Pinecone index exists but cannot hold this crawler's vectors."""
 
 
+# Pinecone (API 2026-07+) describes every vector index with these two schema fields: its
+# dense and sparse vectors. They don't make it a documents-only index; any other field does.
+VECTOR_FIELDS = {"_values", "_sparse_values"}
+
+
 def check_compatible(description, index_name: str, dimension: int) -> None:
     """Raise IncompatibleIndexError unless the index takes plain vectors of `dimension`."""
     schema = getattr(description, "schema", None)
-    if schema is not None and getattr(schema, "fields", None):
+    fields = set(getattr(schema, "fields", None) or ()) if schema is not None else set()
+    if fields - VECTOR_FIELDS:
         raise IncompatibleIndexError(
             f"Pinecone index {index_name!r} has a document schema (fields: "
-            f"{', '.join(schema.fields)}) and only accepts writes through the documents "
+            f"{', '.join(sorted(fields))}) and only accepts writes through the documents "
             "API. Set PINECONE_INDEX_NAME to a new index name; the crawler creates it.")
     if description.dimension != dimension:
         raise IncompatibleIndexError(
